@@ -1105,6 +1105,10 @@ let simplify expr =
             ~args:(List.map hoistings ~f:(fun h -> h.variableDeclaration))
             ~body:exprHoistedWithoutDecs
       in
+      (* Stdio.print_endline *)
+      (*   (Printf.sprintf *)
+      (*      "Before tuple elimination:\n%s" *)
+      (*      (Sexp.to_string_hum (Expr.sexp_of_t exprHoisted))); *)
       (* return exprHoisted *)
       (* Reduce tuples (remove unused elements) *)
       let%bind { res = reduced; droppedAny } = TupleReduce.reduceTuples exprHoisted in

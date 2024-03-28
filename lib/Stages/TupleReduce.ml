@@ -33,8 +33,8 @@ module TupleRequest = struct
   ;;
 
   let unexpected ~actual ~expected =
-    let actualStr = actual |> sexp_of_t |> Sexp.to_string in
-    Unreachable.Error [%string "Expected %{expected} request type, got %{actualStr}"]
+    let actualStr = actual |> sexp_of_t |> Sexp.to_string_hum in
+    Unreachable.Error [%string "Expected %{expected} request type, \ngot %{actualStr}"]
   ;;
 
   let rec subIndices subs = function

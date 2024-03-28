@@ -270,21 +270,15 @@ let rec explicitizeArray paramNamesEnv array
     in
     E.Map
       { body =
-          (* E.Scalar *)
-          (*   { element = *)
           E.TupleDeref
             { expr = E.Ref { id = mapArg; type' = tupleType }
             ; position
             ; type' = atomType
             }
-          (* ; type' = { element = atomType; shape = [] } *)
-          (* } *)
       ; args = [ { binding = mapArg; value = expr } ]
       ; frameShape = shape
       ; type'
       }
-(* let%bind expr = explicitizeArray paramNamesEnv expr in *)
-(* return (E.TupleDeref { expr; position; type' }) *)
 
 and explicitizeAtom paramNamesEnv atom
   : (CompilerState.state, Explicit.Expr.atom, _) ExplicitState.t

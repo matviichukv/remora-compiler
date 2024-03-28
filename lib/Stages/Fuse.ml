@@ -66,35 +66,6 @@ module ConsumerCompatibility = struct
   ;;
 end
 
-(* let rec contains_loopblocks : Nested.Expr.t -> bool = function *)
-(*   | LoopBlock _ -> true *)
-(*   | Ref _ -> false *)
-(*   | Frame _ -> false *)
-(*   | BoxValue b -> contains_loopblocks b.box *)
-(*   | IndexLet i -> *)
-(*     contains_loopblocks i.body *)
-(*     || List.exists i.indexArgs ~f:(fun { indexValue; indexBinding = _; sort = _ } -> *)
-(*       match indexValue with *)
-(*       | Runtime r -> contains_loopblocks r *)
-(*       | FromBox { box; i = _ } -> contains_loopblocks box) *)
-(*   | ReifyIndex _ -> false *)
-(*   | ShapeProd _ -> false *)
-(*   | Let { args; body; type' = _ } -> *)
-(*     contains_loopblocks body *)
-(*     || List.exists args ~f:(fun { value; binding = _ } -> contains_loopblocks value) *)
-(*   | Box { body; bodyType = _; indices = _; type' = _ } -> contains_loopblocks body *)
-(*   | Literal _ -> false *)
-(*   | Values { elements; type' = _ } -> List.exists ~f:contains_loopblocks elements *)
-(*   | ScalarPrimitive _ -> false *)
-(*   | TupleDeref { tuple; index = _; type' = _ } -> contains_loopblocks tuple *)
-(*   | ContiguousSubArray *)
-(*       { arrayArg; indexArg; originalShape = _; resultShape = _; type' = _ } -> *)
-(*     contains_loopblocks arrayArg || contains_loopblocks indexArg *)
-(*   | Append { args; type' = _ } -> List.exists ~f:contains_loopblocks args *)
-(*   | Zip { zipArg; nestCount = _; type' = _ } -> contains_loopblocks zipArg *)
-(*   | Unzip { unzipArg; type' = _ } -> contains_loopblocks unzipArg *)
-(* ;; *)
-
 let rec getUsesInIndex : Index.t -> Set.M(Identifier).t = function
   | Shape elements ->
     elements
@@ -288,7 +259,7 @@ let rec getMapValue mapRefs =
     Some (Tuple (List.map elements ~f:(getMapValue mapRefs)))
   | TupleDeref { tuple; index; type' = _ } ->
     (match getMapValue mapRefs tuple with
-     | Some (Tuple mapValues) -> List.nth mapValues index |> Option.bind ~f:(fun v -> v)
+     | Some (Tuple mapValues) -> List.nth mapValues index |> Option.join
      | Some (Value derefs) -> Some (Value (index :: derefs))
      | None -> None)
   | ScalarPrimitive _ | ContiguousSubArray _ | Append _ | Zip _ | Unzip _ -> None
@@ -426,7 +397,22 @@ let rec liftFrom
            | Some mapValue -> Map.set acc ~key:binding ~data:mapValue
            | None -> acc)
        in
-       (* Lift from body using the extended capturables *)
+       (* mapRefs *)
+       (* |> Map.sexp_of_m__t (module Identifier) sexp_of_mapValueLocation *)
+       (* |> Sexp.to_string_hum *)
+       (* |> Printf.sprintf "Map Refs (let): \n%s" *)
+       (* |> Stdio.print_endline; *)
+       (* extendedMapRefs *)
+       (* |> Map.sexp_of_m__t (module Identifier) sexp_of_mapValueLocation *)
+       (* |> Sexp.to_string_hum *)
+       (* |> Printf.sprintf "Extended Map Refs (let): \n%s" *)
+       (* |> Stdio.print_endline; *)
+       (* args *)
+       (* |> [%sexp_of: letArg list] *)
+       (* |> Sexp.to_string_hum *)
+       (* |> Printf.sprintf "Let args: %s" *)
+       (* |> Stdio.print_endline; *)
+       (* lift from body using the extended capturables *)
        let%map extraction, body =
          liftFrom target targetConsumer capturables extendedMapRefs body
        in
@@ -473,31 +459,15 @@ let rec liftFrom
           | Some (Value derefs) -> `Snd (arg, derefs)
           | Some (Tuple _) | None -> `Trd ()))
     in
-    Stdio.print_endline
-      (Printf.sprintf "loop block: \n%s" (Sexp.to_string_hum (Expr.sexp_of_t loopBlock)));
-    Stdio.print_endline
-      (Printf.sprintf "target: \n%s" (Sexp.to_string_hum (Expr.sexp_of_loopBlock target)));
-    (* let () = *)
-    (*   Stdio.print_endline *)
-    (*     (Printf.sprintf *)
-    (*        "map args: %s" *)
-    (*        (Sexp.to_string_hum *)
-    (*           (List.sexp_of_t *)
-    (*              (fun { binding; ref } -> *)
-    (*                Sexp.List [ Identifier.sexp_of_t binding; Identifier.sexp_of_t ref.id ]) *)
-    (*              mapArgs))) *)
-    (* in *)
-    (* let () = *)
-    (*   Stdio.print_endline *)
-    (*     (Printf.sprintf *)
-    (*        "Args to lift: %s" *)
-    (*        (Sexp.to_string_hum *)
-    (*           (List.sexp_of_t *)
-    (*              (fun { binding; ref } -> *)
-    (*                Sexp.List [ Identifier.sexp_of_t binding; Identifier.sexp_of_t ref.id ]) *)
-    (*              argsToLift))) *)
-    (* in *)
-    let () = () in
+    (* mapRefs *)
+    (* |> Map.sexp_of_m__t (module Identifier) sexp_of_mapValueLocation *)
+    (* |> Sexp.to_string_hum *)
+    (* |> Printf.sprintf "Map Refs: \n%s" *)
+    (* |> Stdio.print_endline; *)
+    (* Stdio.print_endline *)
+    (*   (Printf.sprintf "loop block: \n%s" (Sexp.to_string_hum (Expr.sexp_of_t loopBlock))); *)
+    (* Stdio.print_endline *)
+    (*   (Printf.sprintf "target: \n%s" (Sexp.to_string_hum (Expr.sexp_of_loopBlock target))); *)
     let bindings = List.map mapArgs ~f:(fun arg -> arg.binding) @ mapIotas in
     let bodyCaptures =
       Set.diff (getUsesInExpr mapBody) (Set.of_list (module Identifier) bindings)
@@ -531,13 +501,14 @@ let rec liftFrom
                     Expr.tupleDeref ~tuple:(derefValue restDerefs value) ~index
                   | [] -> value
                 in
-                Stdio.print_endline
-                  (Printf.sprintf
-                     "ref %s of type %s\nderef stack is %s"
-                     (Sexp.to_string_hum
-                        (Identifier.sexp_of_t targetMapResultElementBinding))
-                     (Sexp.to_string_hum (Type.sexp_of_t (Expr.type' target.mapBody)))
-                     (Sexp.to_string_hum (List.sexp_of_t Int.sexp_of_t derefs)));
+                (* Stdio.print_endline *)
+                (*   (Printf.sprintf *)
+                (*      "ref %s of type %s bound to %s\nderef stack is %s" *)
+                (*      (Sexp.to_string_hum *)
+                (*         (Identifier.sexp_of_t targetMapResultElementBinding)) *)
+                (*      (Sexp.to_string_hum (Type.sexp_of_t (Expr.type' target.mapBody))) *)
+                (*      (Sexp.to_string_hum (Expr.sexp_of_ref ref)) *)
+                (*      (Sexp.to_string_hum (List.sexp_of_t Int.sexp_of_t derefs))); *)
                 { binding
                 ; value =
                     derefValue
@@ -798,6 +769,7 @@ type fusionOpportunity =
   ; loopBlock : Expr.loopBlock
   ; mapValueLocationBuilder : mapValueLocation -> mapValueLocation option
   }
+[@@deriving sexp_of]
 
 let rec fuseLoops (scope : Set.M(Identifier).t)
   : Nested.Expr.t -> (Nested.Expr.t, _) FuseState.u
@@ -839,6 +811,11 @@ let rec fuseLoops (scope : Set.M(Identifier).t)
   | ReifyIndex { index = _; type' = _ } as expr -> return expr
   | ShapeProd _ as expr -> return expr
   | Let { args; body; type' } ->
+    (* let' *)
+    (* |> [%sexp_of: t] *)
+    (* |> Sexp.to_string_hum *)
+    (* |> Printf.sprintf "fuseLoops(let): \n%s" *)
+    (* |> Stdio.print_endline; *)
     let allBindings =
       args |> List.map ~f:(fun arg -> arg.binding) |> Set.of_list (module Identifier)
     in
@@ -919,7 +896,8 @@ let rec fuseLoops (scope : Set.M(Identifier).t)
               ; subForLoopBlockInArgValue = subBuilder
               ; loopBlock
               ; mapValueLocationBuilder =
-                  (fun l -> mapValueLocationBuilder (Tuple [ Some l; None ]))
+                  (fun l ->
+                    mapValueLocationBuilder (Tuple [ Some (Tuple [ Some l ]); None ]))
               }
             ]
           | Values { elements; type' } ->
@@ -969,6 +947,11 @@ let rec fuseLoops (scope : Set.M(Identifier).t)
           (fun l -> Some l)
           value)
     in
+    (* opportunities *)
+    (* |> [%sexp_of: fusionOpportunity list] *)
+    (* |> Sexp.to_string_hum *)
+    (* |> Printf.sprintf "opportunities we are trying to fuse: \n%s" *)
+    (* |> Stdio.print_endline; *)
     (* Try fusing at each fusion opportunity until one succeeds *)
     (* tryFusing attempts a fusion opportunity *)
     let tryFusing
@@ -979,9 +962,16 @@ let rec fuseLoops (scope : Set.M(Identifier).t)
       ; mapValueLocationBuilder
       }
       =
+      (* Stdio.print_endline *)
+      (*   (Printf.sprintf "Try fusing arg binding: %s" (Identifier.show argBinding)); *)
       match mapValueLocationBuilder (Value []) with
       | None -> return None
       | Some mapValueLocation ->
+        (* mapValueLocation *)
+        (* |> sexp_of_mapValueLocation *)
+        (* |> Sexp.to_string_hum *)
+        (* |> Printf.sprintf "Map Value Loc (try fusing): %s" *)
+        (* |> Stdio.print_endline; *)
         let%bind extraction, body =
           liftFrom
             loopBlock
@@ -1208,31 +1198,7 @@ let rec fuseLoops (scope : Set.M(Identifier).t)
     let mapBindings =
       mapArgs |> List.map ~f:(fun arg -> arg.binding) |> Set.of_list (module Identifier)
     in
-    (* let () = Random.self_init () in *)
-    (* let rnd = Random.int 100000 in *)
     let mapExtendedScope = Set.union scope mapBindings in
-    (* let () = *)
-    (*   Stdio.print_endline *)
-    (*     (Printf.sprintf *)
-    (*        "%d Pre fuse map body: %s" *)
-    (*        rnd *)
-    (*        (Sexp.to_string_hum (Nested.sexp_of_t mapBody))) *)
-    (* in *)
-    (* let () = *)
-    (*   Stdio.print_endline *)
-    (*     (Printf.sprintf *)
-    (*        "%d scope: %s" *)
-    (*        rnd *)
-    (*        (Sexp.to_string_hum (List.sexp_of_t Identifier.sexp_of_t (Set.to_list scope)))) *)
-    (* in *)
-    (* let () = *)
-    (*   Stdio.print_endline *)
-    (*     (Printf.sprintf *)
-    (*        "%d consumer: %s" *)
-    (*        rnd *)
-    (*        (Sexp.to_string_hum *)
-    (*           (Option.sexp_of_t (fun _ -> Sexp.Atom "Some consumer") consumer))) *)
-    (* in *)
     let%map mapBody = fuseLoops mapExtendedScope mapBody
     and consumer =
       match consumer with
@@ -1256,23 +1222,6 @@ let rec fuseLoops (scope : Set.M(Identifier).t)
       | Some (Scatter { valuesArg = _; indicesArg = _; dIn = _; dOut = _; type' = _ }) as
         v -> return v
     in
-    (* let () = *)
-    (*   Stdio.print_endline *)
-    (*     (Printf.sprintf *)
-    (*        "%d Post fuse map body: %s" *)
-    (*        rnd *)
-    (*        (Sexp.to_string_hum (Nested.sexp_of_t mapBody))) *)
-    (* in *)
-    (* let () = *)
-    (*   Stdio.print_endline *)
-    (*     (Printf.sprintf *)
-    (*        "MapArgs: %s\n" *)
-    (*        (Sexp.to_string *)
-    (*           (List.sexp_of_t *)
-    (*              (fun { binding; ref = _ } -> Identifier.sexp_of_t binding) *)
-    (*              mapArgs))) *)
-    (* in *)
-    (* let () = Stdio__Out_channel.flush Stdio.stdout in *)
     LoopBlock
       { frameShape
       ; mapArgs
