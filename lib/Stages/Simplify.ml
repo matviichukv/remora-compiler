@@ -203,17 +203,20 @@ let getCounts =
   getCountsExpr false
 ;;
 
-let rec subExpr subKey subValue : Expr.t -> Expr.t option =
+(* Substitute each 'key' which is an identifier -> variable name with *)
+(* subValue that is a subexpression *)
+(* This is just a lambda-calculus substitution, nothing fancy about it *)
+let rec substituteExpr subVar subValue : Expr.t -> Expr.t option =
   let open Expr in
   let open Option.Let_syntax in
   function
   | Ref { id; type' = _ } as expr ->
-    return (if Identifier.equal id subKey then subValue else expr)
+    return (if Identifier.equal id subVar then subValue else expr)
   | Frame { elements; dimension; type' } ->
-    let%map elements = elements |> List.map ~f:(subExpr subKey subValue) |> Option.all in
+    let%map elements = elements |> List.map ~f:(substituteExpr subVar subValue) |> Option.all in
     Frame { elements; dimension; type' }
   | BoxValue { box; type' } ->
-    let%map box = subExpr subKey subValue box in
+    let%map box = substituteExpr subVar subValue box in
     BoxValue { box; type' }
   | IndexLet { indexArgs; body; type' } ->
     let%map indexArgs =
@@ -222,15 +225,15 @@ let rec subExpr subKey subValue : Expr.t -> Expr.t option =
         let%map indexValue =
           match indexValue with
           | Runtime value ->
-            let%map value = subExpr subKey subValue value in
+            let%map value = substituteExpr subVar subValue value in
             Runtime value
           | FromBox { box; i } ->
-            let%map box = subExpr subKey subValue box in
+            let%map box = substituteExpr subVar subValue box in
             FromBox { box; i }
         in
         { indexBinding; indexValue; sort })
       |> Option.all
-    and body = subExpr subKey subValue body in
+    and body = substituteExpr subVar subValue body in
     IndexLet { indexArgs; body; type' }
   | ReifyIndex { index; type' } -> return (ReifyIndex { index; type' })
   | ShapeProd shape -> return (ShapeProd shape)
@@ -238,10 +241,10 @@ let rec subExpr subKey subValue : Expr.t -> Expr.t option =
     let%map args =
       args
       |> List.map ~f:(fun { binding; value } ->
-        let%map value = subExpr subKey subValue value in
+        let%map value = substituteExpr subVar subValue value in
         { binding; value })
       |> Option.all
-    and body = subExpr subKey subValue body in
+    and body = substituteExpr subVar subValue body in
     Let { args; body; type' }
   | LoopBlock
       { frameShape
@@ -256,12 +259,13 @@ let rec subExpr subKey subValue : Expr.t -> Expr.t option =
     let%map mapArgs =
       mapArgs
       |> List.map ~f:(fun { binding; ref } ->
-        if Identifier.equal subKey ref.id then None else return { binding; ref })
+        if Identifier.equal subVar ref.id then None else return { binding; ref })
       |> Option.all
-    and mapBody = subExpr subKey subValue mapBody
+    and mapBody = substituteExpr subVar subValue mapBody
     and consumer =
+      (* TODO: this looks weird *)
       let subProduction (p : Expr.production) =
-        if Identifier.equal subKey p.productionId then None else return p
+        if Identifier.equal subVar p.productionId then None else return p
       in
       match consumer with
       | None -> return None
@@ -270,16 +274,16 @@ let rec subExpr subKey subValue : Expr.t -> Expr.t option =
           | ProductionTuple { elements; type' = _ } ->
             List.exists elements ~f:productionTupleContainsIdInSubs
           | ProductionTupleAtom production ->
-            Identifier.equal subKey production.productionId
+            Identifier.equal subVar production.productionId
         in
         let%map arg =
           if productionTupleContainsIdInSubs arg.production then None else return arg
-        and body = subExpr subKey subValue body
-        and zero = subExpr subKey subValue zero in
+        and body = substituteExpr subVar subValue body
+        and zero = substituteExpr subVar subValue zero in
         Some (Reduce { arg; body; zero; d; character; type' })
       | Some (Fold { zeroArg; arrayArgs; body; reverse; d; character; type' }) ->
         let%map zeroArg =
-          let%map zeroValue = subExpr subKey subValue zeroArg.zeroValue in
+          let%map zeroValue = substituteExpr subVar subValue zeroArg.zeroValue in
           { zeroBinding = zeroArg.zeroBinding; zeroValue }
         and arrayArgs =
           arrayArgs
@@ -287,7 +291,7 @@ let rec subExpr subKey subValue : Expr.t -> Expr.t option =
             let%map production = subProduction production in
             { binding; production })
           |> Option.all
-        and body = subExpr subKey subValue body in
+        and body = substituteExpr subVar subValue body in
         Some (Fold { zeroArg; arrayArgs; body; reverse; d; character; type' })
       | Some (Scatter { valuesArg; indicesArg; dIn; dOut; type' }) ->
         let%map valuesArg = subProduction valuesArg
@@ -305,33 +309,89 @@ let rec subExpr subKey subValue : Expr.t -> Expr.t option =
       ; type'
       }
   | Append { args; type' } ->
-    let%map args = args |> List.map ~f:(subExpr subKey subValue) |> Option.all in
+    let%map args = args |> List.map ~f:(substituteExpr subVar subValue) |> Option.all in
     Append { args; type' }
   | ContiguousSubArray { arrayArg; indexArg; originalShape; resultShape; type' } ->
-    let%map arrayArg = subExpr subKey subValue arrayArg
-    and indexArg = subExpr subKey subValue indexArg in
+    let%map arrayArg = substituteExpr subVar subValue arrayArg
+    and indexArg = substituteExpr subVar subValue indexArg in
     ContiguousSubArray { arrayArg; indexArg; originalShape; resultShape; type' }
   | Literal (IntLiteral _ | FloatLiteral _ | CharacterLiteral _ | BooleanLiteral _) as lit
     -> return lit
   | Box { indices; body; bodyType; type' } ->
-    let%map body = subExpr subKey subValue body in
+    let%map body = substituteExpr subVar subValue body in
     Box { indices; body; bodyType; type' }
   | ScalarPrimitive { op; args; type' } ->
-    let%map args = args |> List.map ~f:(subExpr subKey subValue) |> Option.all in
+    let%map args = args |> List.map ~f:(substituteExpr subVar subValue) |> Option.all in
     ScalarPrimitive { op; args; type' }
   | Values { elements; type' } ->
-    let%map elements = elements |> List.map ~f:(subExpr subKey subValue) |> Option.all in
+    let%map elements = elements |> List.map ~f:(substituteExpr subVar subValue) |> Option.all in
     Values { elements; type' }
   | TupleDeref { tuple; index; type' } ->
-    let%map tuple = subExpr subKey subValue tuple in
+    let%map tuple = substituteExpr subVar subValue tuple in
     TupleDeref { tuple; index; type' }
   | Zip { zipArg; nestCount; type' } ->
-    let%map zipArg = subExpr subKey subValue zipArg in
+    let%map zipArg = substituteExpr subVar subValue zipArg in
     Zip { zipArg; nestCount; type' }
   | Unzip { unzipArg; type' } ->
-    let%map unzipArg = subExpr subKey subValue unzipArg in
+    let%map unzipArg = substituteExpr subVar subValue unzipArg in
     Unzip { unzipArg; type' }
 ;;
+
+let constantFold (op: Expr.scalarOp) (args: Expr.t list) (type': Type.t): Expr.t = 
+  match op, args with
+     | Add, [ Literal (IntLiteral a); Literal (IntLiteral b) ] ->
+       Literal (IntLiteral Int.(a + b))
+     | Add, [ Literal (IntLiteral 0); value ] | Add, [ value; Literal (IntLiteral 0) ] ->
+       value
+     | Sub, [ Literal (IntLiteral a); Literal (IntLiteral b) ] ->
+       Literal (IntLiteral (a - b))
+     | Sub, [ value; Literal (IntLiteral 0) ] -> value
+     | Mul, [ Literal (IntLiteral a); Literal (IntLiteral b) ] ->
+       Literal (IntLiteral Int.(a * b))
+     | Mul, [ Literal (IntLiteral 1); value ] | Mul, [ value; Literal (IntLiteral 1) ] ->
+       value
+     | Mul, [ Literal (IntLiteral 0); _ ] | Mul, [ _; Literal (IntLiteral 0) ] ->
+       (* DISCARD!!! *)
+       Literal (IntLiteral 0)
+     | Div, [ Literal (IntLiteral a); Literal (IntLiteral b) ] ->
+       Literal (IntLiteral (a / b))
+     | Div, [ value; Literal (IntLiteral 1) ] -> value
+     | If, [ Literal (BooleanLiteral true); then'; _ ] -> then'
+     | If, [ Literal (BooleanLiteral false); _; else' ] -> else'
+     | And, [ Literal (BooleanLiteral true); value ]
+     | And, [ value; Literal (BooleanLiteral true) ] -> value
+     | And, [ Literal (BooleanLiteral false); _ ]
+     | And, [ _; Literal (BooleanLiteral false) ] ->
+       (* DISCARD!!! *)
+       Literal (BooleanLiteral false)
+     | Or, [ Literal (BooleanLiteral false); value ]
+     | Or, [ value; Literal (BooleanLiteral false) ] -> value
+     | Or, [ Literal (BooleanLiteral true); _ ] | Or, [ _; Literal (BooleanLiteral true) ]
+       ->
+       (* DISCARD!!! *)
+       Literal (BooleanLiteral true)
+     | Not, [ Literal (BooleanLiteral b) ] -> Literal (BooleanLiteral (not b))
+     | Equal, [ Literal (IntLiteral a); Literal (IntLiteral b) ] ->
+       Literal (BooleanLiteral (a = b))
+     | Ne, [ Literal (IntLiteral a); Literal (IntLiteral b) ] ->
+       Literal (BooleanLiteral (a <> b))
+     | Lt, [ Literal (IntLiteral a); Literal (IntLiteral b) ] ->
+       Literal (BooleanLiteral (a < b))
+     | LtEq, [ Literal (IntLiteral a); Literal (IntLiteral b) ] ->
+       Literal (BooleanLiteral (a <= b))
+     | Gt, [ Literal (IntLiteral a); Literal (IntLiteral b) ] ->
+       Literal (BooleanLiteral (a > b))
+     | GtEq, [ Literal (IntLiteral a); Literal (IntLiteral b) ] ->
+       Literal (BooleanLiteral (a >= b))
+     | LtF, [ Literal (FloatLiteral a); Literal (FloatLiteral b) ] ->
+       Literal (BooleanLiteral Float.(a < b))
+     | LtEqF, [ Literal (FloatLiteral a); Literal (FloatLiteral b) ] ->
+       Literal (BooleanLiteral Float.(a <= b))
+     | GtF, [ Literal (FloatLiteral a); Literal (FloatLiteral b) ] ->
+       Literal (BooleanLiteral Float.(a > b))
+     | GtEqF, [ Literal (FloatLiteral a); Literal (FloatLiteral b) ] ->
+       Literal (BooleanLiteral Float.(a >= b))
+     | _ -> ScalarPrimitive { op; args; type' };;
 
 (* Perform the following optimizations:
    - Copy propogation
@@ -349,6 +409,7 @@ let rec optimize : Expr.t -> Expr.t =
   | BoxValue { box; type' } ->
     let box = optimize box in
     (* TODO: if box is just a box, immediately unbox *)
+    (* We would need to also change every unbox op for this value -> web? *)
     BoxValue { box; type' }
   | IndexLet { indexArgs; body; type' } ->
     (* TODO: remove unused bindings and inline ones known statically *)
@@ -426,7 +487,7 @@ let rec optimize : Expr.t -> Expr.t =
     (match args with
      | [] -> Frame { dimension = 0; elements = []; type' }
      | arg :: [] -> arg
-     | _ :: _ :: _ as args -> Append { args; type' })
+     | _  as args -> Append { args; type' })
   | Let { args; body; type' } ->
     (* Do an initial simplification of the argument values and the body *)
     let args =
@@ -435,20 +496,19 @@ let rec optimize : Expr.t -> Expr.t =
         Expr.{ binding; value })
     in
     let body = optimize body in
-    (* Inline args that can be propogated and remove unused args. *)
+    (* Inline args that can be propagated and remove unused args. *)
     let bodyCounts = getCounts body in
     let argsRev, body =
       List.fold args ~init:([], body) ~f:(fun (argsAcc, body) arg ->
-        let count = Counts.get bodyCounts arg.binding in
-        if count.count = 0
+        let argCount = Counts.get bodyCounts arg.binding in
+        if argCount.count = 0
         then
           (* No usages, so drop the arg *)
-          (* DISCARD!!! *)
           argsAcc, body
-        else if (count.count = 1 && not count.inLoop) || nonComputational arg.value
+        else if (argCount.count = 1 && not argCount.inLoop) || nonComputational arg.value
         then (
           (* The arg can be subbed into the body *)
-          match subExpr arg.binding arg.value body with
+          match substituteExpr arg.binding arg.value body with
           | Some body -> argsAcc, body
           | None ->
             (* Subbing into body failed, so keep the arg *)
@@ -475,10 +535,11 @@ let rec optimize : Expr.t -> Expr.t =
     (* Simplify the args and iotas, removing unused ones *)
     let mapBodyCounts = getCounts mapBody in
     let mapArgs =
+      (* all bindings not used are discarded *)
       List.filter mapArgs ~f:(fun arg ->
-        (* DISCARD!!! *)
         (Counts.get mapBodyCounts arg.binding).count > 0)
     in
+    (* all bindings not used are discarded *)
     let mapIotas =
       List.filter mapIotas ~f:(fun iota -> (Counts.get mapBodyCounts iota).count > 0)
     in
@@ -496,7 +557,6 @@ let rec optimize : Expr.t -> Expr.t =
         let bodyCounts = getCounts body in
         let arrayArgs =
           List.filter arrayArgs ~f:(fun arg ->
-            (* DISCARD!!! *)
             (Counts.get bodyCounts arg.binding).count > 0)
         in
         Some (Fold { zeroArg; arrayArgs; body; reverse; d; character; type' })
@@ -524,60 +584,7 @@ let rec optimize : Expr.t -> Expr.t =
   | ScalarPrimitive { op; args; type' } ->
     let args = List.map args ~f:optimize in
     (* Do constant folding: *)
-    (match op, args with
-     | Add, [ Literal (IntLiteral a); Literal (IntLiteral b) ] ->
-       Literal (IntLiteral Int.(a + b))
-     | Add, [ Literal (IntLiteral 0); value ] | Add, [ value; Literal (IntLiteral 0) ] ->
-       value
-     | Sub, [ Literal (IntLiteral a); Literal (IntLiteral b) ] ->
-       Literal (IntLiteral (a - b))
-     | Sub, [ value; Literal (IntLiteral 0) ] -> value
-     | Mul, [ Literal (IntLiteral a); Literal (IntLiteral b) ] ->
-       Literal (IntLiteral Int.(a * b))
-     | Mul, [ Literal (IntLiteral 1); value ] | Mul, [ value; Literal (IntLiteral 1) ] ->
-       value
-     | Mul, [ Literal (IntLiteral 0); _ ] | Mul, [ _; Literal (IntLiteral 0) ] ->
-       (* DISCARD!!! *)
-       Literal (IntLiteral 0)
-     | Div, [ Literal (IntLiteral a); Literal (IntLiteral b) ] ->
-       Literal (IntLiteral (a / b))
-     | Div, [ value; Literal (IntLiteral 1) ] -> value
-     | If, [ Literal (BooleanLiteral true); then'; _ ] -> then'
-     | If, [ Literal (BooleanLiteral false); _; else' ] -> else'
-     | And, [ Literal (BooleanLiteral true); value ]
-     | And, [ value; Literal (BooleanLiteral true) ] -> value
-     | And, [ Literal (BooleanLiteral false); _ ]
-     | And, [ _; Literal (BooleanLiteral false) ] ->
-       (* DISCARD!!! *)
-       Literal (BooleanLiteral false)
-     | Or, [ Literal (BooleanLiteral false); value ]
-     | Or, [ value; Literal (BooleanLiteral false) ] -> value
-     | Or, [ Literal (BooleanLiteral true); _ ] | Or, [ _; Literal (BooleanLiteral true) ]
-       ->
-       (* DISCARD!!! *)
-       Literal (BooleanLiteral true)
-     | Not, [ Literal (BooleanLiteral b) ] -> Literal (BooleanLiteral (not b))
-     | Equal, [ Literal (IntLiteral a); Literal (IntLiteral b) ] ->
-       Literal (BooleanLiteral (a = b))
-     | Ne, [ Literal (IntLiteral a); Literal (IntLiteral b) ] ->
-       Literal (BooleanLiteral (a <> b))
-     | Lt, [ Literal (IntLiteral a); Literal (IntLiteral b) ] ->
-       Literal (BooleanLiteral (a < b))
-     | LtEq, [ Literal (IntLiteral a); Literal (IntLiteral b) ] ->
-       Literal (BooleanLiteral (a <= b))
-     | Gt, [ Literal (IntLiteral a); Literal (IntLiteral b) ] ->
-       Literal (BooleanLiteral (a > b))
-     | GtEq, [ Literal (IntLiteral a); Literal (IntLiteral b) ] ->
-       Literal (BooleanLiteral (a >= b))
-     | LtF, [ Literal (FloatLiteral a); Literal (FloatLiteral b) ] ->
-       Literal (BooleanLiteral Float.(a < b))
-     | LtEqF, [ Literal (FloatLiteral a); Literal (FloatLiteral b) ] ->
-       Literal (BooleanLiteral Float.(a <= b))
-     | GtF, [ Literal (FloatLiteral a); Literal (FloatLiteral b) ] ->
-       Literal (BooleanLiteral Float.(a > b))
-     | GtEqF, [ Literal (FloatLiteral a); Literal (FloatLiteral b) ] ->
-       Literal (BooleanLiteral Float.(a >= b))
-     | _ -> ScalarPrimitive { op; args; type' })
+    constantFold op args type'
   | Values { elements; type' } ->
     let elements = List.map elements ~f:optimize in
     let values = Expr.Values { elements; type' } in
@@ -672,7 +679,8 @@ let resolveDepsAndDeclareHoistings ~hoistings body =
 
 (* Hoist variables that can be hoisted. Maps are also cleaned up while doing
    this. (nested maps with empty frames that can be flattened are, and maps
-   with empty frames and no args are removed) *)
+   with empty frames and no args are removed) 
+   Returns expr with hoisted expressions and a list of hoistings to propagate up *)
 let rec hoistDeclarations : Expr.t -> Expr.t * hoisting list = function
   | Ref _ as ref -> ref, []
   | Frame { elements; dimension; type' } ->
@@ -845,10 +853,10 @@ and hoistDeclarationsInBody body ~bindings : Expr.t * hoisting list =
     in
     loop ~toDeclare:[] ~queue:hoistings ~barrier:bindings
   in
-  let hoistingsToDeclare, hoistingsToPropogate = findHoistingsToDeclare bodyHoistings in
+  let hoistingsToDeclare, hoistingsToPropagate = findHoistingsToDeclare bodyHoistings in
   (* Modify the body to declare the hoistings *)
   let body = resolveDepsAndDeclareHoistings ~hoistings:hoistingsToDeclare body in
-  body, hoistingsToPropogate
+  body, hoistingsToPropagate
 ;;
 
 module HoistState = struct
@@ -1050,10 +1058,10 @@ and hoistExpressionsInBody loopBarrier body ~bindings =
   (* Hoist from the body *)
   let extendedLoopBarrier = BindingSet.union loopBarrier bindings in
   let%bind body, bodyHoistings = hoistExpressions extendedLoopBarrier body in
-  (* determine which hoistings can be propogated outside the body and which need to be
+  (* determine which hoistings can be propagated outside the body and which need to be
      declared in the body*)
-  let rec splitHoistingsToDeclareAndPropogate hoistings =
-    let toDeclareUnhoisted, toPropogate =
+  let rec splitHoistingsToDeclareAndPropagate hoistings =
+    let toDeclareUnhoisted, toPropagate =
       List.partition_map hoistings ~f:(fun hoisting ->
         if Counts.usesAny hoisting.counts bindings
         then First hoisting.variableDeclaration
@@ -1061,25 +1069,25 @@ and hoistExpressionsInBody loopBarrier body ~bindings =
     in
     (* The hoistings' values may have expression of their own that can be hoisted
        beyond this body *)
-    let%bind toDeclare, moreToPropogateUnsplit =
+    let%bind toDeclare, moreToPropagateUnsplit =
       hoistExpressionsMap toDeclareUnhoisted ~f:(fun { binding; value } ->
         let%map value, hoistings = hoistExpressions extendedLoopBarrier value in
         { variableDeclaration = { binding; value }; counts = getCounts value }, hoistings)
     in
-    (* moreToPropogateUnsplit needs to be checked to see what needs to be declared *)
-    let%map moreToDeclare, moreToPropogate =
-      match moreToPropogateUnsplit with
+    (* moreToPropagateUnsplit needs to be checked to see what needs to be declared *)
+    let%map moreToDeclare, moreToPropagate =
+      match moreToPropagateUnsplit with
       | [] -> return ([], [])
-      | _ :: _ -> splitHoistingsToDeclareAndPropogate moreToPropogateUnsplit
+      | _ :: _ -> splitHoistingsToDeclareAndPropagate moreToPropagateUnsplit
     in
-    toDeclare @ moreToDeclare, toPropogate @ moreToPropogate
+    toDeclare @ moreToDeclare, toPropagate @ moreToPropagate
   in
-  let%map hoistingsToDeclare, hoistingsToPropogate =
-    splitHoistingsToDeclareAndPropogate bodyHoistings
+  let%map hoistingsToDeclare, hoistingsToPropagate =
+    splitHoistingsToDeclareAndPropagate bodyHoistings
   in
   (* Modify the body to declare the hoistings *)
   let body = resolveDepsAndDeclareHoistings ~hoistings:hoistingsToDeclare body in
-  body, hoistingsToPropogate
+  body, hoistingsToPropagate
 ;;
 
 let simplify expr =

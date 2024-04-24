@@ -5,21 +5,19 @@ let rec fuseAndSimplify (prog : Nested.t) : (CompilerState.state, Nested.t, _) S
   (* Stdio.print_endline *)
   (*   (Printf.sprintf "Before simplify: \n%s" (Sexp.to_string_hum (Nested.sexp_of_t prog))); *)
   let%bind simplified = Simplify.simplify prog in
-  (* let () = *)
-  (*   Stdio.print_endline *)
-  (*     (Printf.sprintf *)
-  (*        "Before fusion: \n%s" *)
-  (*        (Sexp.to_string_hum (Nested.sexp_of_t simplified))) *)
-  (* in *)
+  (* Stdio.print_endline
+      (Printf.sprintf
+         "Before fusion: \n%s"
+         (Sexp.to_string_hum (Nested.sexp_of_t prog))); *)
+
   let%bind fusionResult = Fuse.fuse simplified in
-  (* Stdio.print_endline "After fusion:"; *)
-  (* let () = *)
-  (*   fusionResult.result *)
-  (*   |> [%sexp_of: Nested.t] *)
-  (*   |> Sexp.to_string_hum *)
-  (*   |> Stdio.print_endline *)
-  (* in *)
+  (* Stdio.print_endline "After fusion:";
+    fusionResult.result
+    |> [%sexp_of: Nested.t]
+    |> Sexp.to_string_hum
+    |> Stdio.print_endline; *)
   if fusionResult.fusedAny then fuseAndSimplify fusionResult.result else return simplified
+  (* return simplified *)
 ;;
 
 (* return simplified *)

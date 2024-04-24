@@ -1376,15 +1376,20 @@ module TypeCheck = struct
         List.map dimensions ~f:(fun d ->
           Typed.Index.Add (Typed.Index.dimensionConstant d))
       in
-      T.Array
-        (Frame
-           { dimensions
-           ; elements =
-               checkedElements
-               |> List.map ~f:(fun e ->
-                 T.Scalar { element = e; type' = { element = T.atomType e; shape = [] } })
-           ; type' = { element = Typed.Type.Sigma sigmaType; shape }
-           })
+      (* If it's a signle element box, don't do an array and make a scalar *)
+      (match checkedElements with
+       | [ box ] -> T.Atom box
+       | checkedElements ->
+         T.Array
+           (Frame
+              { dimensions
+              ; elements =
+                  checkedElements
+                  |> List.map ~f:(fun e ->
+                    T.Scalar
+                      { element = e; type' = { element = T.atomType e; shape = [] } })
+              ; type' = { element = Typed.Type.Sigma sigmaType; shape }
+              }))
     | U.Reshape { newShape; value } ->
       let valueSource = value.source in
       let%bind newShape = SortChecker.checkAndExpectShape env newShape
@@ -1416,24 +1421,25 @@ module TypeCheck = struct
           { elem = IncompatibleShapes { originalShape = oldShape; newShape }; source }
       in
       let%map () = verifyShapeCompatibility oldShape newShape in *)
-      ok (T.Array
-        (ContiguousSubArray
-           { arrayArg = value
-           ; indexArg =
-               Frame
-                 { elements = []
-                 ; dimensions = [ 0 ]
-                 ; type' =
-                     { element = Literal IntLiteral
-                     ; shape = [ Add (Typed.Index.dimensionConstant 0) ]
-                     }
-                 }
-           ; originalShape = oldShape
-           ; resultShape = newShape
-           ; cellShape = []
-           ; l = Typed.Index.dimensionConstant 0
-           ; type' = Arr newType
-           }))
+      ok
+        (T.Array
+           (ContiguousSubArray
+              { arrayArg = value
+              ; indexArg =
+                  Frame
+                    { elements = []
+                    ; dimensions = [ 0 ]
+                    ; type' =
+                        { element = Literal IntLiteral
+                        ; shape = [ Add (Typed.Index.dimensionConstant 0) ]
+                        }
+                    }
+              ; originalShape = oldShape
+              ; resultShape = newShape
+              ; cellShape = []
+              ; l = Typed.Index.dimensionConstant 0
+              ; type' = Arr newType
+              }))
     | U.ReifyDimension dimension ->
       let%map dimension = SortChecker.checkAndExpectDim env dimension in
       T.Array

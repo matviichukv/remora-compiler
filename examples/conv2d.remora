@@ -1,166 +1,234 @@
 ;; ---------------------------- UTILITIES ---------------------------------------------
+;; @s is the shape of the array, l is length of index
+;;(define (indices-of{| @s l}) : [int @s l])
 (define (indices-of/2{| d1 d2}): [int d1 d2 2]
-((fn ([id [int]]) [(/ id (reify-dimension d1)) (% id (reify-dimension d1))]) iota{| [d1 d2]}))
-  ; (let [d1-val (reify-dimension d1)]
-  ;   ((fn ([id [int]]) [(/ id d1-val) (% id d1-val)]) iota{| [d1 d2]})))
+  (let [d1-val (reify-dimension d1)]
+    ((fn ([id [int]]) [(/ id d1-val) (% id d1-val)]) iota{| [d1 d2]})))
+
+(define (indices-of/4{| d1 d2 d3 d4}): [int d1 d2 d3 d4 4]
+  (let [d1-val (reify-dimension d1)]
+    (let [d2-val (reify-dimension d2)]
+      (let [d3-val (reify-dimension d3)]
+        (let [d4-val (reify-dimension d4)]
+          ((fn ([id [int]])
+             (let [id1 (/ id (* d2-val (* d3-val d4-val)))]
+               (let [id2 (% id (* d2-val (* d3-val d4-val)))]
+                 (let [id3 (% id (* d3-val d4-val))]
+                   [id1
+                    (/ id2 (* d3-val d4-val))
+                    (/ id3 d4-val)
+                    (% id3 d4-val)]))))
+           iota{| [d1 d2 d3 d4]}))))))
 
 (define (subarray/2{t | in1 in2 out1 out2} [arr [t in1 in2]] [offset [int 2]])
   (index{t | [in1 in2] [] 2} arr (+ (indices-of/2{| out1 out2}) 
                                     (replicate{int | [out1 out2] [2]} offset))))
 
+(define (index-in-range?{| l-1} [idx [int (+ l-1 1)]] [top [int (+ l-1 1)]]) : [bool]
+  (define zeroes ((fn ([_ [int]]) 0) iota{| [(+ l-1 1)]}))
+  (reduce{bool | l-1 [] []} and (and (>= idx zeroes) (< idx top))))
+
+;; FIXME: this is totally broken as it either abuses the conditional execution of if
+;; (as it is not enforced right now), or that index out of bounds just gives a bogus value
+;; both are bad but this should be a builtin function
+(define (subarray-fill/2{t | in1 in2 out1 out2}
+          [arr [t in1 in2]]
+          [offset [int 2]]
+          [fill [t]]) : [t out1 out2]
+  (define top [(reify-dimension in1) (reify-dimension in2)])
+  (define (cond-index [idx [int 2]]) : [t]
+    (if{t | }
+        (index-in-range?{| 1} idx top)
+        (index{t | [in1 in2] [] 2} arr idx)
+        fill))
+  (cond-index (+ (indices-of/2{| out1 out2}) (replicate{int | [out1 out2] [2]} offset))))
+
+;; Preconditions:
+;; 1. axis is a permutations of numbers [0,4), no duplicates
+(define (transpose/4{t | in1 in2 in3 in4 out1 out2 out3 out4}
+          [arr [t in1 in2 in3 in4]]
+          [axis [int 4]])
+  (define idxs (indices-of/4{| in1 in2 in3 in4}))
+  (define transposed-idxs (scatter{int | 4 4 []} idxs axis))
+  (index{t | [in1 in2 in3 in4] [] 4} arr transposed-idxs))
+
 (define (flatten/4{t | in1 in2 in3 in4 out1 out2} [arr [t in1 in2 in3 in4]]) : [t out1 out2]
-  (reshape [out1 out2] arr))
-  ;(reshape [out1 out2] (transpose/4{float | in1 in2 in3 in4 in1 in3 in2 in4 } [0 2 1 3] arr)))
+  (reshape [out1 out2] (transpose/4{t | in1 in2 in3 in4 in1 in3 in2 in4 } arr [0 2 1 3])))
+
+;; Mirrors along all axis, kinda hack before we have stdlib mirror
+(define (full-mirror/2{t | n} [arr [t n n]]) : [t n n]
+  (index{t| [n n] [] 2} arr (- (reify-dimension n) (+ 1 (indices-of/2{| n n})))))
+
+;; Syntax idea:
+;; (define (pad/2{}{n pad}))
+;; (pad/2{}{5 1})
+
+;; (define (pad/2{t | n pad} (arr : [t n n]) [fill : t])) ->
+(define (pad/2{t | n pad} [arr [t n n]] [fill [t]]) : [t (+ n pad pad) (+ n pad pad)]
+  (define pad-val (reify-dimension pad))
+  (subarray-fill/2{t | n n (+ n pad pad) (+ n pad pad)} arr [(- 0 pad-val) (- 0 pad-val)] fill))
 
 ;; ---------------------------- CONVOLUTION ---------------------------------------------
-;;(define (conv1d{| n-1 k-1 o} [data [float (+ n-1 1)]] [kernel [float (+ k-1 1)]]) : [float o]
-;;  (reduce{float | k-1 [] []} +. (*. (replicate{float | [o] [(+ k-1 1)]} kernel) (subvector{float | (+ n-1 1) (+ k-1 1) []} data iota{| [o]}))))
-;;(define (conv2d{| n-1 k-1 pad stride o} [data [float (+ n-1 1) (+ n-1 1)]]
-;;                             [kernel [float (+ k-1 1) (+ k-1 1)]])
-;;  (subarray/fill data (- indices-of/2{| [o o]} (reify-dimension pad)) [(reify-dimension (+ k-1 1)) (reify-dimension (+ k-1 1))] 0))
-;;  (reduce{float | k-1 [] []} +. (reduce{float | k-1 [] []} +. (*. (replicate{float | [(+ out-1 1) (+ in-1 1)] [(+ in-1 1)]} input) weights)))
+;; Matrix point-wise float add
+(define (matrix-+.{ | m n} [a [float m n]] [b [float m n]])
+  (+. a b))
 
-;; (define (conv-2d{| n-1 k-1 o stride pad} [data [float (+ n-1 1) (+ n-1 1)]]
-;;                               [weights [float (+ k-1 1) (+ k-1 1)]]
-;;                               [bias [float]]) : [float o o]
-;;   (let [windows (subarray/2{float | (+ 1 n-1) (+ 1 n-1) (+ 1 k-1) (+ 1 k-1)}
-;;                            data (* (reify-dimension stride) (indices-of/2{| o o})))]
-;;     (let [repl-weights (replicate{float | [o o] [(+ k-1 1) (+ k-1 1)]} weights)]
-;;       (+. bias (reduce{float | k-1 [] []} +. (reduce{float | k-1 [] []} +. (*. windows repl-weights)))))))
+(define (conv-2d{| n-1 k-1 o stride pad}
+                              [data [float (+ n-1 1) (+ n-1 1)]]
+                              [weights [float (+ k-1 1) (+ k-1 1)]]
+                              [bias [float]]) : [float o o]
+  (let [windows (subarray/2{float | (+ 1 n-1) (+ 1 n-1) (+ 1 k-1) (+ 1 k-1)}
+                           data (* (reify-dimension stride) (indices-of/2{| o o})))]
+    (let [repl-weights (replicate{float | [o o] [(+ k-1 1) (+ k-1 1)]} weights)]
+      (+. bias (reduce{float | k-1 [] []} +. (reduce{float | k-1 [] []} +. (*. windows repl-weights)))))))
 
-;; (define (conv-2d-back{| n-1 k-1 o-1 pad stride} [data [float (+ 1 n-1) (+ 1 n-1)]]
-;;                                                 [weights [float (+ 1 k-1) (+ 1 k-1)]]
-;;                                                 [dout [float (+ 1 o-1) (+ 1 o-1)]])
-;;   (define din-masks  (reshape [(+ 1 o-1) (+ 1 o-1) (+ 1 n-1) (+ 1 n-1)]
-;;                      (flatten/4{float | }
-;;                      ((fn ([idx [int 2]] [dout-val [float]])
-;;                         (subarray-fill/2{float | 1 1 stride stride} [dout-val] idx 0.0))
-;;                       (indices-of/2{| (+ 1 o-1) (+ 1 o-1) }) dout)
-;;                      )))
-;;   (define (+.out [a [float (+ 1 n-1) (+ 1 n-1)]] [b [float (+ 1 n-1) (+ 1 n-1)]])
-;;     (+. a b))
-;;   (define din (*. data (reduce{float | o-1 [] [(+ 1 n-1) (+ 1 n-1)]} +.out (reduce{float | o-1 [] [(+ 1 n-1) (+ 1 n-1)]} +.out din-masks))))
-;;   (define dw  (conv-2d{|} data dout 0.0))
-;;   (define db  (reduce{float | (+ 1 o-1) [] [] } +. (reduce{float | (+ 1 o-1) [] []} +. dout))))
+;; we need convolution 3d for channels in 2d image
+(define (conv-2d-channel{| n-1 k-1 c-1 o stride pad}
+          [data [float (+ c-1 1) (+ n-1 1) (+ n-1 1)]]
+          [weights [float (+ c-1 1) (+ k-1 1) (+ k-1 1)]]
+          [bias [float]]) : [float o o]
+  (reduce{float | c-1 [] [o o]}
+    matrix-+.{ | o o}
+    (conv-2d{| n-1 k-1 o stride pad} data weights bias)))
+
+(define (conv-2d-back{| n-1 k-2 o-1 stride o*stride o_dil-1} [data [float (+ 1 n-1) (+ 1 n-1)]]
+                                                  [weights [float (+ 2 k-2) (+ 2 k-2)]]
+                                                  [dout [float (+ 1 o-1) (+ 1 o-1)]])
+  (define dout_dil (subarray/2{float | o*stride o*stride (+ o_dil-1 1) (+ o_dil-1 1)}
+    (flatten/4{float | (+ o-1 1) (+ o-1 1) stride stride o*stride o*stride}
+      (subarray-fill/2{float | 1 1 stride stride} (reshape [(+ o-1 1) (+ o-1 1) 1 1] dout)
+                                                  [0 0]
+                                                  0.0))
+    [0 0]))
+  (define dout_dil_pad (pad/2{float | (+ o_dil-1 1) (+ k-2 1)} dout_dil 0.0))
+  (define weights_mirror (full-mirror/2{float | (+ k-2 2)} weights))
+  (define dw (conv-2d{| n-1 o_dil-1 (+ k-2 2) 1 0} data dout_dil 0.0))
+  (define din (conv-2d{| (+ o_dil-1 1 k-2 k-2 1) (+ k-2 1) (+ n-1 1) 1 0} dout_dil_pad weights_mirror 0.0))
+  (define db (reduce{float | o-1 [] []} +. (reduce{float | o-1 [] []} +. dout)))
+  (values (box () [float (+ k-2 2) (+ k-2 2)] dw) 
+          (box () [float (+ n-1 1) (+ n-1 1)] din)
+          (box () [float] db)))
+
+(define (conv-2d-back-channel{| n-1 k-2 c-1 o-1 stride o*stride o_dil-1}
+          [data [float (+ c-1 1) (+ n-1 1) (+ n-1 1)]]
+          [weights [float (+ c-1 1) (+ k-2 2) (+ k-2 2)]]
+          [dout [float (+ o-1 1) (+ o-1 1)]])
+  ;;
+  (define res (conv-2d-back{| n-1 k-2 o-1 stride o*stride o_dil-1}
+                data weights (/. dout (int->float (reify-dimension (+ c-1 1))))))
+  (define dw (unbox (#0 res) (dw_unboxed) dw_unboxed))
+  (define din (unbox (#1 res) (din_unboxed) din_unboxed))
+  (define db_vec (unbox (#2 res) (db_unboxed) db_unboxed))
+  (define db (reduce{float | c-1 [] []} +. db_vec))
+  ;; Not sure why this doesn't work, will check later
+  ;; (define db (unbox (#2 res) (db_unboxed) (reduce{float | c-1 [] []} +. db_unboxed)))
+  ;; TODO: this is so incredibly verbose
+  (values (box () [float (+ c-1 1) (+ k-2 2) (+ k-2 2)] dw)
+          (box () [float (+ c-1 1) (+ n-1 1) (+ n-1 1)] din)
+          (box () [float] db)))
+
 ;; ---------------------------- FULLY CONNECTED ---------------------------------------------
-;; (define (fc-2d-fwd{| in-1 out-1} [input [float (+ in-1 1)]]
-;;                                  [weights [float (+ out-1 1) (+ in-1 1)]]
-;;                                  [bias [float (+ out-1 1)]]) : [float (+ out-1 1)]
-;;   (+. bias
-;;     (reduce{float | in-1 [] []}
-;;       +.
-;;       (*. (replicate{float | [(+ out-1 1)] [(+ in-1 1)]} input)
-;;           weights))))
+(define (fc-2d-fwd{| in-1 out-1} [input [float (+ in-1 1)]]
+                                 [weights [float (+ out-1 1) (+ in-1 1)]]
+                                 [bias [float (+ out-1 1)]]) : [float (+ out-1 1)]
+  (+. bias
+    (reduce{float | in-1 [] []}
+      +.
+      (*. (replicate{float | [(+ out-1 1)] [(+ in-1 1)]} input)
+          weights))))
 
-;; (define (fc-2d-bwd-dx{| dy-dim-1 input-dim-1 }
-;;           [dy [float (+ 1 dy-dim-1)]]
-;;           [w  [float (+ 1 dy-dim-1) (+ 1 input-dim-1)]]) : [float (+ 1 input-dim-1)]
-;;   (reduce{float | dy-dim-1 [] [(+ 1 input-dim-1)] }
-;;     (fn ([a [float (+ 1 input-dim-1)]]
-;;          [b [float (+ 1 input-dim-1)]]) : [float (+ 1 input-dim-1)]
-;;       (+. a b))
-;;     (*. dy w)))
+(define (fc-2d-back{| in-1 o-1}
+          [in [float (+ in-1 1)]]
+          [w  [float (+ o-1 1) (+ in-1 1)]]
+          [dout [float (+ o-1 1)]])
+  (define din
+    (reduce{float | o-1 [] [(+ in-1 1)] }
+      (fn ([a [float (+ in-1 1)]]
+           [b [float (+ in-1 1)]]) : [float (+ in-1 1)]
+        (+. a b))
+      (*. dout w)))
+  (define dw (*. (replicate{float | [(+ in-1 1)] []} dout)
+                 (replicate{float | [(+ o-1 1)] [(+ in-1 1)]} in)))
+  ;; (define db (reduce{float | o-1 [] []} +. dout))
+  (values (box () [float (+ in-1 1)] din)
+          (box () [float (+ o-1 1) (+ in-1 1)] dw)
+          ;; it's just the dout vector
+          (box () [float (+ o-1 1)] dout)))
 
-;; (define (fc-2d-bwd-dw{| input-dim dy-dim }
-;;           [input [float input-dim]]
-;;           [dy [float dy-dim]]) : [float dy-dim input-dim]
-;;   (*. (replicate{float | [input-dim] []} dy)
-;;       (replicate{float | [dy-dim] [input-dim]} input)))
-
-;; (define (fc-2d-bwd-db{| input-dim-1 } [dy [float (+ 1 input-dim-1)]]) : [float]
-;;   (reduce{float | input-dim-1 [] []} +. dy))
 
 ;;(conv1d{| 4 2 3} [1.0 2.0 3.0 4.0 5.0] [[0.5 1.0 1.5] [1.0 1.0 1.0]])
 ;;(fc-2d{| 2 1} [1.0 2.0 3.0] [[1.0 2.0 3.0] [0.1 0.2 0.3]] [0.5 0.3])
 
 ;; ---------------------------- [MAX] POOLING ---------------------------------------------
-;; this one assumes the AD backprop so we don't need to return indices and such
-;;(define (max-pool-2d{| in-1 stride pad k-1 out} [input [float (+ in-1 1) (+ in-1 1)]]): [float out out]
-;;  (reduce{float | k-1 [] []} max. (reduce{float | k-1 [] []} max-float (subarray/fill input indices-of/2{| [out out]} [(reify-dimension (+ k-1 1)) (reify-dimension (+ k-1 1))]))))
-
-;; for any pooling layer
-;;(define (pool-2d{| in-1 stride pad k-1 out cell-elt-count} [input [float (+ in-1 1) (+ in-1 1)]] [reducer (-> (float float) float)])
-;;  (reduce-n{| } reducer (reshape [] (subarray/fill input indices-of/2{| [out out]} [(reify-dimension (+ k-1 1)) (reify-dimension (+ k-1 1))])))
-
 (define (max2. [a [float]] [b [float]]) : [float]
-  a)
-  ;; (select{float | } (>. a b) a b))
+  (select{float | } (>. a b) a b))
 
 (define (min2. [a [float]] [b [float]])
-  b)
-  ;; (select{float | } (<. a b) a b))
+  (select{float | } (<. a b) a b))
 
-;; (define (foo{| n-1 pool-size-1} [data [float (+ 1 n-1) (+ 1 n-1)]] [index [int 2]])
-;;   (reduce{float | pool-size-1 [] []}
-;;     max2.
-;;     (reduce{float | pool-size-1 [] []}
-;;       max2.
-;;       (subarray/2{float | (+ 1 n-1) (+ 1 n-1) (+ 1 pool-size-1) (+ 1 pool-size-1)}
-;;         data index))))
+(define (max-pool-2d{| n-1 pool-size-1 stride out} [data [float (+ 1 n-1) (+ n-1 1)]]) ;: [float out out]
+  (define windows (subarray/2{float | (+ 1 n-1) (+ 1 n-1) (+ 1 pool-size-1) (+ 1 pool-size-1) } data (* (reify-dimension stride) (indices-of/2{| out out}))))
+  (define max-per-pool (reduce{float | pool-size-1 [] []} max2. (reduce{float | pool-size-1 [] []} max2. windows)))
+  max-per-pool)
 
-;; (define (bar{| pool-size} [win [float pool-size pool-size]] [max-val [float]])
-;;   (select{float | } (=. win max-val) 1.0 0.0))
-
-;; (define (max-pool-2d{| n-1 pool-size-1 out} [data [float (+ 1 n-1) (+ n-1 1)]]) ;: [float out out]
-;;   (define windows (subarray/2{float | (+ 1 n-1) (+ 1 n-1) (+ 1 pool-size-1) (+ 1 pool-size-1) } data (indices-of/2{| out out})))
-;;   ;; (define max-per-pool (reduce{float | pool-size-1 [] []} max2. (reduce{float | pool-size-1 [] []} max2. windows)))
-;;   ;; (define max-per-pool (reduce{float | pool-size-1 [] [] } +. windows))
-;;   (define pool-size (reify-dimension (+ 1 pool-size-1)))
-;;   ; mult cause for pooling, pool-size = stride
-;;   (define max-per-pool (foo{| n-1 pool-size-1} data (* pool-size (indices-of/2{| out out}))))
-;;   max-per-pool)
-  ;; (=. (replicate{float | [(+ 1 pool-size-1) (+ 1 pool-size-1)] []} max-per-pool) windows))
-  ;; (define mask ((fn ([win [float (+ 1 pool-size-1) (+ 1 pool-size-1)]] [max-val [float]])
-  ;;                  (select{float | } (=. win max-val) 1.0 0.0))
-  ;;                windows
-  ;;                max-per-pool))
-  ;; (define mask (bar{| (+ 1 pool-size-1)} windows max-per-pool))
-  ;; mask)
-  ;; (bar{| (+ 1 pool-size-1)} windows max-per-pool))
-
-;; (define (max-pool-back{|} [mask [float ... ...]] [dout [float ... ...]]) : [float ... ...]
-;;   (define max-count-per-pool (reduce{} + (reduce{} + mask)))
-;;   (define weighted-max ((fn ([m [int ... ...]] [count [int]] [dout-val [float]])
-;;                           (*. dout-val (/. m (int->float count))))
-;;                         mask
-;;                         max-count-per-pool
-;;                         dout))
-;;   (define din (reshape (transpose{float|} [0 2 1 3] weighted-max)))
+(define (max-pool-back{| n-1 pool-size-1 out stride}
+                          [in [float (+ n-1 1) (+ n-1 1)]]
+                          [max-per-pool [float out out]]
+                          [dout [float out out]]) ;: [float in in]
+  (define windows (subarray/2{float | (+ 1 n-1) (+ 1 n-1) (+ 1 pool-size-1) (+ 1 pool-size-1) } in (* (reify-dimension stride) (indices-of/2{| out out}))))
+  (define mask ((fn ([win [float (+ 1 pool-size-1) (+ 1 pool-size-1)]]
+                     [max-val [float]])
+                   (select{float | } (=. win max-val) 1.0 0.0))
+                 windows
+                 max-per-pool))
+  (define max-count-per-pool (reduce{float | pool-size-1 [] []} +. (reduce{float | pool-size-1 [] []} +. mask)))
+  (define weighted-max ((fn ([m [float (+ pool-size-1 1) (+ pool-size-1 1)]]
+                             [count [float]]
+                             [dout-val [float]])
+                          (*. dout-val (/. m count)))
+                        mask
+                        max-count-per-pool
+                        dout))
+  (flatten/4{float | out out (+ pool-size-1 1) (+ pool-size-1 1) (+ n-1 1) (+ n-1 1)} weighted-max))
 
 ;; ---------------------------- DROPOUT ---------------------------------------------
 ;; TODO: how to random
 ;; ---------------------------- BATCH NORMALIZATION -----------------------------------------
-;; (define (mean{| n-1 } [input [float (+ 1 n-1) (+ 1 n-1)]])
-;;   (define n-val (reify-dimension (+ 1 n-1)))
-;;   (/. (reduce{float | n-1 [] [] } +. (reduce{float | n-1 [] []} +. input))
-;;       (int->float (* n-val n-val))))
-;; (define (variance{| n-1 } [input [float (+ 1 n-1) (+ 1 n-1)]] [mean [float]])
-;;   (define n-val (reify-dimension (+ 1 n-1)))
-;;   (let [diff-x (-. input mean)]
-;;     (/. (reduce{float | n-1 [] []} +. (reduce{float | n-1 [] []} +. (*. diff-x diff-x)))
-;;       (int->float (- (* n-val n-val) 1)))))
+(define (mean{| n-1 } [input [float (+ 1 n-1) (+ 1 n-1)]])
+  (define n-val (reify-dimension (+ 1 n-1)))
+  (/. (reduce{float | n-1 [] [] } +. (reduce{float | n-1 [] []} +. input))
+      (int->float (* n-val n-val))))
 
-;; (define (batch-norm-2d{ | n-1 k}
-;;                        [input [float k (+ 1 n-1) (+ 1 n-1)]]
-;;                        [rolling-mean [float k]]
-;;                        [rolling-var [float k]]
-;;                        [bias [float k]]
-;;                        [train [bool]]) ; : [float k (+ 1 n-1) (+ 1 n-1)]
-;;   (define input-mean (mean{| n-1} input))
-;;   (define input-var  (variance{| n-1} input input-mean))
-;;   (define new-rolling-mean (+. (*. 0.99 rolling-mean) (*. 0.01 input-mean)))
-;;   ;; (define new-rolling-var  (+. (*. 0.99 rolling-var)  (*. 0.01 input-var)))
-;;   (define mean-to-use (select{float | } train input-mean rolling-mean))
-;;   ;; (define var-to-use  (select{float | } train input-var rolling-var))
-;;   (define diff-x (-. input mean-to-use))
-;;   ;; (define normalized-input (/. diff-x (sqrt (+. var-to-use 0.000001))))
-;;   (/. diff-x (+. 0.00001 input-mean)))
-;;   ;; (define output (+. normalized-input bias))
-;;   ;; output)
+(define (variance{| n-1 } [input [float (+ 1 n-1) (+ 1 n-1)]] [mean [float]])
+  (define n-val (reify-dimension (+ 1 n-1)))
+  (let [diff-x (-. input mean)]
+    (/. (reduce{float | n-1 [] []} +. (reduce{float | n-1 [] []} +. (*. diff-x diff-x)))
+      (int->float (- (* n-val n-val) 1)))))
 
+;; Returns 3 values: output, new rolling mean, new rolling var
+(define (batch-norm-2d{ | n-1 k}
+                       [input [float k (+ 1 n-1) (+ 1 n-1)]]
+                       [rolling-mean [float k]]
+                       [rolling-var [float k]]
+                       [bias [float k]]
+                       [train [bool]]) ; : [float k (+ 1 n-1) (+ 1 n-1)]
+  (define input-mean (mean{| n-1} input))
+  (define input-var  (variance{| n-1} input input-mean))
+  (define new-rolling-mean (+. (*. 0.99 rolling-mean) (*. 0.01 input-mean)))
+  (define new-rolling-var  (+. (*. 0.99 rolling-var)  (*. 0.01 input-var)))
+  (define mean-to-use (select{float | } train input-mean rolling-mean))
+  (define var-to-use  (select{float | } train input-var rolling-var))
+  (define diff-x (-. input mean-to-use))
+  (define normalized-input (/. diff-x (sqrt (+. var-to-use 0.000001))))
+  (define output (+. normalized-input bias))
+  (values (box () [float k (+ n-1 1) (+ n-1 1)] output)
+          (box () [float k] new-rolling-mean)
+          (box () [float k] new-rolling-var)))
+
+;; Returns 4 values: delta for mean, delta for var, delta for bias, delta for input
 (define (batch-norm-2d-back{| n-1 k}
-                            [input [float k (+ 1 n-1) (+ 1 n-1)]]
-                            [dout  [float k (+ 1 n-1) (+ 1 n-1)]]
+                            [input [float k (+ n-1 1) (+ n-1 1)]]
+                            [dout  [float k (+ n-1 1) (+ n-1 1)]]
                             [mean  [float k]]
                             [var   [float k]]
                             [rolling-mean [float k]]
@@ -178,7 +246,10 @@
   (define din      (+. (/. dout (sqrt var-to-use))
                        (+. (/. (*. 2.0 (*. dvar (-. input mean-to-use))) spatial)
                            (/. dmean spatial))))
-  din)
+  (values (box () [float k] dmean)
+          (box () [float k] dvar)
+          (box () [float k] db)
+          (box () [float k (+ n-1 1) (+ n-1 1)] din)))
 ;; ---------------------------- DETECTION ---------------------------------------------
 
 ;; yolo-box - 5 long vector - [x y w h confidence]
@@ -283,18 +354,14 @@
      (define cur-idx (index{float | [4] [] 1} acc [3]))
      (define iou (yolo-box-iou next truth-box))
      (define rmse (yolo-box-rmse next truth-box))
-     [rmse iou cur-idx 0.0])
-     ;; (define best-idx (index{float | [4] [] 1} acc [0]))
-     ;; (define best-iou (index{float | [4] [] 1} acc [1]))
-     ;; (define best-rmse (index{float | [4] [] 1} acc [2]))
-     ;; totally fake code
-     ;; [0.0 0.0 0.0 0.0])
-     ;; real code
-     ;; (select{float |} (or (>. best-iou 0.0) (>. iou 0.0))
-     ;;    (select{float |} (>. iou best-iou) [cur-idx iou rmse (+. 1.0 cur-idx)]
-     ;;                                       [best-idx best-iou best-rmse (+. 1.0 cur-idx)])
-     ;;    (select{float |} (<. rmse best-rmse) [cur-idx iou rmse (+. 1.0 cur-idx)]
-     ;;                                         [best-idx best-iou best-rmse (+. 1.0 cur-idx)])))
+     (define best-idx (index{float | [4] [] 1} acc [0]))
+     (define best-iou (index{float | [4] [] 1} acc [1]))
+     (define best-rmse (index{float | [4] [] 1} acc [2]))
+     (select{float |} (or (>. best-iou 0.0) (>. iou 0.0))
+        (select{float |} (>. iou best-iou) [cur-idx iou rmse (+. 1.0 cur-idx)]
+                                           [best-idx best-iou best-rmse (+. 1.0 cur-idx)])
+        (select{float |} (<. rmse best-rmse) [cur-idx iou rmse (+. 1.0 cur-idx)]
+                                             [best-idx best-iou best-rmse (+. 1.0 cur-idx)])))
   (define first-box : [float 5] (head{float | boxes-num-1 [5]} box-pred))
   (define first-box-state [0.0
                            (yolo-box-iou first-box truth-box)
@@ -302,59 +369,59 @@
                            0.0])
   (define rest-boxes (tail{float | boxes-num-1 [5]} box-pred))
   (define best-box-stats (fold{float [float 4] | boxes-num-1 [5] } box-cmp first-box-state rest-boxes))
-  best-box-stats)
-  ;; (define best-box-idx (float->int (index{float | [4] [] 1} best-box-stats [0])))
+  (define best-box-idx (float->int (index{float | [4] [] 1} best-box-stats [0])))
 
-  ;; (define (calc-box-delta [box [float 5]] [idx [int]])
-  ;;    (select{float |} (= best-box-idx idx)
-  ;;                     (best-yolo-box-delta box truth-box coord-scale obj-scale sqrt-flag rescore-flag)
-  ;;                     (other-yolo-box-delta box noobj-scale)))
-  ;; (define delta-boxes (calc-box-delta box-pred iota{| [(+ 1 boxes-num-1)]}))
-  ;; (define dout (merge-box-and-class-delta{| (+ 1 classes-1) (+ 1 boxes-num-1)} delta-boxes class-delta))
-  ;; dout)
+  (define (calc-box-delta [box [float 5]] [idx [int]])
+     (select{float |} (= best-box-idx idx)
+                      (best-yolo-box-delta box truth-box coord-scale obj-scale sqrt-flag rescore-flag)
+                      (other-yolo-box-delta box noobj-scale)))
+  (define delta-boxes (calc-box-delta box-pred iota{| [(+ 1 boxes-num-1)]}))
+  (define dout (merge-box-and-class-delta{| (+ 1 classes-1) (+ 1 boxes-num-1)} delta-boxes class-delta))
+  dout)
 
 ;; ---------------------------- ACTIVATIONS ---------------------------------------------
 
-; (define (leaky-relu [x [float]]) : float
-;   (select{float |} (>. x 0.0) x (*. 0.1 x)))
+(define (leaky-relu [x [float]]) : float
+  (select{float |} (>. x 0.0) x (*. 0.1 x)))
 
-; (define (leaky-relu-prime [x [float]]) : float
-;   (select{float |} (>. x 0.0) 1.0 0.1))
+(define (leaky-relu-prime [x [float]]) : float
+  (select{float |} (>. x 0.0) 1.0 0.1))
 
-; (define (linear [x [float]]) : float
-;   x)
+(define (linear [x [float]]) : float
+  x)
 
-; (define (linear-prime [x [float]]) : float
-;   1.0)
+(define (linear-prime [x [float]]) : float
+  1.0)
 
-; (define (softmax{| in-1} [x [float (+ 1 in-1)]]) : [float (+ 1 in-1)]
-;   (let [e (exp x)]
-;     (/. e (reduce{float | in-1 [] []} +. e))))
+(define (softmax{| in-1} [x [float (+ 1 in-1)]]) : [float (+ 1 in-1)]
+  (let [e (exp x)]
+    (/. e (reduce{float | in-1 [] []} +. e))))
 
-; ; truth is one-hot encoding vector - there can only be 1 1.0 value, everything else is 0.0
-; ; x is the output of softmax function
-; (define (softmax-prime{| in} [x [float in]] [truth [float in]]) : [float in]
-;   (-. x truth))
+; truth is one-hot encoding vector - there can only be 1 1.0 value, everything else is 0.0
+; x is the output of softmax function
+(define (softmax-prime{| in} [x [float in]] [truth [float in]]) : [float in]
+  (-. x truth))
 
 ; turns softmax output vector to one-hot encoded vector -
 ; max value turns into 1, all others into 0
-;;(define (softmax->class-vector{| in-1} [e [float (+ 1 in-1)]]): [float (+ 1 in-1)]
-;;  (let ((max-val (reduce{float | in-1 [] []} max-float e)))
-;;    ((fn ([v [float]] (select (=. v max-val) 1.0 0.0))) e)))
+(define (softmax->class-vector{| in-1} [e [float (+ 1 in-1)]]): [float (+ 1 in-1)]
+  (let [max-val (reduce{float | in-1 [] []} max2. e)]
+    (if{float|} (=. e max-val) 1.0 0.0)))
+    ;; ((fn ([v [float]] (select (=. v max-val) 1.0 0.0))) e)))
 
 
 ;; ---------------------------- FLATTEN (?) ---------------------------------------------
 ;; Flatten layers are to feed data into fully connected layers 
 ;; (since they require 1D input no matter what kind of data is pr;cessed)
-; (define (flatten-2d-fwd{| @in out} [input [float @in]]) : [float out]
-;   (reshape [out] input))
+(define (flatten-2d-fwd{| @in out} [input [float @in]]) : [float out]
+  (reshape [out] input))
 
-; (define (flatten-2d-bwd{| @in out} [dy [float out]]) : [float @in]
-;   (reshape [@in] dy))
+(define (flatten-2d-bwd{| @in out} [dy [float out]]) : [float @in]
+  (reshape [@in] dy))
 
 
 
-;; ---------------------------- MAIN ---------------------------------------------
+;; ---------------------------- TESTING ---------------------------------------------
 
 ;(flatten-2d-fwd{| [3 3 3 3] 81} (int->float iota{|[3 3 3 3]}))
 ; (subarray/2{int | 5 5 3 3} iota{| [5 5]} [0 0])
@@ -369,15 +436,30 @@
 ;;                        [bias [float k]]
 ;;                        [train [bool]])
 ;; (batch-norm-2d{| 1 1} (int->float iota{| [1 2 2]}) [0.0] [0.0] [1.3] #t)
+;; (define (batch-norm-2d-back{| n-1 k}
+;;                             [input [float k (+ 1 n-1) (+ 1 n-1)]]
+;;                             [dout  [float k (+ 1 n-1) (+ 1 n-1)]]
+;;                             [mean  [float k]]
+;;                             [var   [float k]]
+;;                             [rolling-mean [float k]]
+;;                             [rolling-var  [float k]]
+;;                             [train [bool]])
+;; (batch-norm-2d-back{| 1 1} (int->float iota{| [1 2 2]})
+;;                            (int->float iota{| [1 2 2]})
+;;                            [1.5]
+;;                            [1.667]
+;;                            [0.0]
+;;                            [0.0]
+;;                            #t)
 
 ;; (define (max-pool-2d{| n-1 pool-size-1 out} [data [float (+ 1 n-1) (+ n-1 1)]]) : [float out out]
 
-;; (max-pool-2d{| 3 1 2} (int->float iota{| [4 4]}))
-; (+. 1.0 (index{float | [5 5] [] 2} (int->float iota{| [5 5]}) (+ (replicate{int | [3 3] [3 3 2]} (indices-of/2{| 3 3}))
-;                                     (replicate{int | [3 3] [2]} ((fn ([id [int]]) [(/ id 3) (% id 3)]) iota{| [3 3]})))))
-;; (+. 1.0 (subarray/2{float | 5 5 3 3} (int->float iota{| [5 5]})
-;;                                      ((fn ([id [int]]) [(/ id 3) (% id 3)]) iota{| [3 3]})))
-;; (-. (int->float iota{| [1 2 2]}) (int->float iota{| [1 2 2]}))
+;; (define res (max-pool-2d{| 3 1 2 2} (int->float iota{| [4 4]})))
+;; (define (max-pool-back{| in pool-size-1 out }
+;;                           [in [float in in]]
+;;                           [max-per-pool [float (+ pool-size-1 1) (+ pool-size-1 1)]]
+;;                           [dout [float out out]]) ;: [float in in]
+;;(max-pool-back{| 3 1 2 2} (int->float iota{| [4 4]}) res (int->float iota{| [2 2]}))
 
 ;; Precondition: boxes-arr-size = 5 * boxes-num
 ;; Precondition: n = boxes-arr-size + classes-1 + 1
@@ -390,4 +472,124 @@
 ;;                       [noobj-scale  [float]]
 ;;                       [coord-scale  [float]]
 ;;                       [class-scale  [float]])
-(detection-2d{| 20 10 1 9 } (int->float iota{| [20]}) (int->float iota{| [20]}) #t #f 1.3 0.9 1.1 0.7)
+;; (detection-2d{| 20 10 1 9 } (int->float iota{| [20]}) (int->float iota{| [20]}) #t #f 1.3 0.9 1.1 0.7)
+
+;; (define (conv-2d{| n-1 k-1 o stride pad} [data [float (+ n-1 1) (+ n-1 1)]]
+;;                               [weights [float (+ k-1 1) (+ k-1 1)]]
+;;                               [bias [float]]) : [float o o]
+;; (conv-2d{| 2 1 2 1 0} (int->float iota{| [3 3]})
+;;        [[0.5 1.0] [1.5 2.0]]
+;;        1.0)
+;; one of the middle layers in YOLO, conv from 256 x 28 x 28 -> 512 x 26 x 26
+
+;; (conv-2d-channel{| 27 2 31 26 1 0 }
+;;   (int->float iota{| [64 32 28 28]})
+;;   (int->float iota{| [64 32 3 3]})
+;;   (replicate{float | [32] []} 1.0))
+;; (transpose/4{int | 2 2 2 2 2 2 2 2} iota{| [2 2 2 2]} [0 2 1 3])
+;; (define (flatten/4{t | in1 in2 in3 in4 out1 out2} [arr [t in1 in2 in3 in4]]) : [t out1 out2]
+;; (flatten/4{int | 2 2 2 2 4 4} iota{| [2 2 2 2]})
+;; (scatter{int |4 7 []} [3 5 7 9] [0 2 1 3])
+;; (subarray-fill/2{int | 5 5 3 3} iota{| [5 5]} [-1 -1] 0)
+;; (conv-2d{| 4 1 4 1 0 } (int->float iota{| [5 5]}) (int->float iota{| [2 2]}) [0.0])
+;; (define (conv-2d-back{| n-1 k-1 o-1 pad stride} [data [float (+ 1 n-1) (+ 1 n-1)]]
+;;                                                 [weights [float (+ 1 k-1) (+ 1 k-1)]]
+;;                                                 [dout [float (+ 1 o-1) (+ 1 o-1)]])
+;; (conv-2d-back{| 4 1 3 1 0} (int->float iota{| [5 5]})
+;;                            (int->float iota{| [2 2]})
+;;                            (int->float iota{| [4 4]}))
+
+;; (define (conv-2d-back{| n-1 k-1 o-1 stride inner} [data [float (+ 1 n-1) (+ 1 n-1)]]
+;;                                                   [weights [float (+ 1 k-1) (+ 1 k-1)]]
+;;                                                   [dout [float (+ 1 o-1) (+ 1 o-1)]])
+;; (define res (#1 (conv-2d-back{| 4 1 1 2 4 2 } (int->float iota{|[5 5]})
+;;                            (int->float iota{|[3 3]})
+;;                            (int->float iota{|[2 2]}))))
+;; (unbox res (arr) arr)
+;; (define (conv-2d-back-channel{| n-1 k-2 c-1 o-1 stride o*stride o_dil-1}
+;;           [data [float (+ c-1 1) (+ n-1 1) (+ n-1 1)]]
+;;           [weights [float (+ c-1 1) (+ k-1 1) (+ k-1 1)]]
+;;           [dout [float (+ o-1 1) (+ o-1 1)]])
+;; (define res (#0 (conv-2d-back-channel{|4 1 2 1 2 4 2}
+;;                   (int->float iota{| [3 5 5]})
+;;                   (int->float iota{| [3 3 3]})
+;;                   (int->float iota{| [2 2]}))))
+;; (unbox res (arr) arr)
+
+
+;; ----------------------------------------- MAIN -------------------------------------------
+;; This is going to be the YOLO-v1 tiny (because we don't free up memory yet)
+;; Also, image size is halved
+;; We don't do padding, just to save some memory with all allocation and such
+;; bias in all convolution layers is 0 because we batch normalize instead
+;; (define (batch-norm-2d{ | n-1 k}
+;;                        [input [float k (+ 1 n-1) (+ 1 n-1)]]
+;;                        [rolling-mean [float k]]
+;;                        [rolling-var [float k]]
+;;                        [bias [float k]]
+;;                        [train [bool]])
+;; (define (conv-2d-channel{| n-1 k-1 c-1 o stride pad}
+;;           [data [float (+ c-1 1) (+ n-1 1) (+ n-1 1)]]
+;;           [weights [float (+ c-1 1) (+ k-1 1) (+ k-1 1)]]
+;;           [bias [float]]) : [float o o]
+;; (define (max-pool-2d{| n-1 pool-size-1 stride out} [data [float (+ 1 n-1) (+ n-1 1)]]) ;: [float out out]
+
+;; (define (fc-2d-fwd{| in-1 out-1} [input [float (+ in-1 1)]]
+;;                                  [weights [float (+ out-1 1) (+ in-1 1)]]
+;;                                  [bias [float (+ out-1 1)]]) : [float (+ out-1 1)]
+;; This is for a single prediction cell, so
+;; n = boxes-arr-size + classes-1 + 1 = (+ boxes-num-1 1) * 5 + classes-1 + 1
+;; (define (detection-2d{| n boxes-arr-size boxes-num-1 classes-1}
+;;                       [input        [float n]]
+;;                       [truth        [float n]]
+;;                       [sqrt-flag    [bool]]
+;;                       [rescore-flag [bool]]
+;;                       [obj-scale    [float]]
+;;                       [noobj-scale  [float]]
+;;                       [coord-scale  [float]]
+;;                       [class-scale  [float]])
+
+(define input (int->float iota{| [3 224 224]}))
+;; Layer 1
+(define w1 (int->float iota{| [16 3 3 3]}))
+(define out1_conv (conv-2d-channel{| 223 2 2 222 1 0} input w1 0.0))
+out1_conv
+;; (define out1_norm_box (batch-norm-2d{| 221 16}
+;;                         out1_conv
+;;                         (replicate{float | [16] []} 0.0)
+;;                         (replicate{float | [16] []} 0.0)
+;;                         (int->float iota{| [16]})
+;;                         #f))
+;;(define out1_norm (unbox (#0 out1_norm_box) (out) out))
+
+;;(define out1 (leaky-relu out1_norm))
+
+;; Layer 2
+;; (define out2 (max-pool-2d{| 221 1 2 111} out1))
+;; ;; Layer 3
+;; (define w3 (int->float iota{| [32 16 3 3]}))
+;; (define out3_conv (conv-2d-channel{| 110 2 15 109 1 0} out2 w3 0.0))
+;; (define out3_norm_box (batch-norm-2d{| 108 32}
+;;                         out3_conv
+;;                         (replicate{float | [32] []} 0.0)
+;;                         (replicate{float | [32] []} 0.0)
+;;                         (int->float iota{| [32]})
+;;                         #t))
+;; (define out3_norm (unbox (#0 out3_norm_box) (out) out))
+;; (define out3 (leaky-relu out3_norm))
+;; ;; Layer 4
+;; ;; a bunch of data is lost here because we don't do padding and # of elts is odd
+;; (define out4 (max-pool-2d{| 108 1 2 54} out3))
+;; out4
+;; Layer 5
+;; (define w5 (int->float iota{| [64 32 3 3]}))
+;; (define out5_conv (conv-2d-channel{| 53 2 31 52 1 0} out4 w5 0.0))
+;; (define out5_norm_box (batch-norm-2d{| 51 64}
+;;                         out5_conv
+;;                         (replicate{float | [64] []} 0.0)
+;;                         (replicate{float | [64] []} 0.0)
+;;                         (int->float iota{| [64]})
+;;                         #f))
+;; (define out5_norm (unbox (#0 out5_norm_box) (out) out))
+;; (define out5 (leaky-relu out5_norm))
+;; out5
