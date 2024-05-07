@@ -3246,8 +3246,62 @@ let genMainBlock (deviceInfo : DeviceInfo.t) (main : withCaptures) =
                  ]
              ])
   in
+  let%bind () =
+    GenState.write
+    @@ C.Define
+         { name = StrName "start"
+         ; type' = Some (TypeRef (StrName "cudaEvent_t"))
+         ; value = None
+         }
+  in
+  let%bind () =
+    GenState.write
+    @@ C.Define
+         { name = StrName "stop"
+         ; type' = Some (TypeRef (StrName "cudaEvent_t"))
+         ; value = None
+         }
+  in
+  let%bind () =
+    GenState.write
+    @@ C.Eval (Cx.callBuiltin "cudaEventCreate" [ C.PtrRef (VarRef (StrName "start")) ])
+  in
+  let%bind () =
+    GenState.write
+    @@ C.Eval (Cx.callBuiltin "cudaEventCreate" [ C.PtrRef (VarRef (StrName "stop")) ])
+  in
+  let%bind () =
+    GenState.write
+    @@ C.Eval (Cx.callBuiltin "cudaEventRecord" [ VarRef (StrName "start") ])
+  in
   let%bind cVal = genExpr ~hostOrDevice:Host ~store:true main in
+  let%bind () =
+    GenState.write
+    @@ C.Eval (Cx.callBuiltin "cudaEventRecord" [ VarRef (StrName "stop") ])
+  in
+  let%bind () =
+    GenState.write
+    @@ C.Eval (Cx.callBuiltin "cudaEventSynchronize" [ VarRef (StrName "stop") ])
+  in
   let%bind () = genPrint (Expr.type' main) cVal in
+  let%bind () =
+    GenState.write
+    @@ C.Define
+         { name = StrName "millis"
+         ; type' = Some (TypeRef (StrName "float"))
+         ; value = Some (Literal (Float64Literal 0.0))
+         }
+  in
+  let%bind () =
+    GenState.write
+    @@ C.Eval
+         (Cx.callBuiltin
+            "cudaEventElapsedTime"
+            [ PtrRef (Cx.refStr "millis"); Cx.refStr "start"; Cx.refStr "stop" ])
+  in
+  let%bind () =
+    GenState.write @@ C.Eval Cx.(refStr "std::cout" << refStr "millis" << charLit '\n')
+  in
   return ()
 ;;
 

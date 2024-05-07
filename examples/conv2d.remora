@@ -553,43 +553,39 @@
 ;; Layer 1
 (define w1 (int->float iota{| [16 3 3 3]}))
 (define out1_conv (conv-2d-channel{| 223 2 2 222 1 0} input w1 0.0))
-out1_conv
-;; (define out1_norm_box (batch-norm-2d{| 221 16}
-;;                         out1_conv
-;;                         (replicate{float | [16] []} 0.0)
-;;                         (replicate{float | [16] []} 0.0)
-;;                         (int->float iota{| [16]})
-;;                         #f))
-;;(define out1_norm (unbox (#0 out1_norm_box) (out) out))
-
-;;(define out1 (leaky-relu out1_norm))
-
+(define out1_norm_box (batch-norm-2d{| 221 16}
+                         out1_conv
+                         (replicate{float | [16] []} 0.0)
+                         (replicate{float | [16] []} 0.0)
+                         (int->float iota{| [16]})
+                         #f))
+(define out1_norm (unbox (#0 out1_norm_box) (out) out))
+(define out1 (leaky-relu out1_norm))
 ;; Layer 2
-;; (define out2 (max-pool-2d{| 221 1 2 111} out1))
-;; ;; Layer 3
-;; (define w3 (int->float iota{| [32 16 3 3]}))
-;; (define out3_conv (conv-2d-channel{| 110 2 15 109 1 0} out2 w3 0.0))
-;; (define out3_norm_box (batch-norm-2d{| 108 32}
-;;                         out3_conv
-;;                         (replicate{float | [32] []} 0.0)
-;;                         (replicate{float | [32] []} 0.0)
-;;                         (int->float iota{| [32]})
-;;                         #t))
-;; (define out3_norm (unbox (#0 out3_norm_box) (out) out))
-;; (define out3 (leaky-relu out3_norm))
-;; ;; Layer 4
-;; ;; a bunch of data is lost here because we don't do padding and # of elts is odd
-;; (define out4 (max-pool-2d{| 108 1 2 54} out3))
-;; out4
+(define out2 (max-pool-2d{| 221 1 2 111} out1))
+ ;; Layer 3
+(define w3 (int->float iota{| [32 16 3 3]}))
+(define out3_conv (conv-2d-channel{| 110 2 15 109 1 0} out2 w3 0.0))
+(define out3_norm_box (batch-norm-2d{| 108 32}
+                         out3_conv
+                         (replicate{float | [32] []} 0.0)
+                         (replicate{float | [32] []} 0.0)
+                         (int->float iota{| [32]})
+                         #t))
+(define out3_norm (unbox (#0 out3_norm_box) (out) out))
+(define out3 (leaky-relu out3_norm))
+;; Layer 4
+;; a bunch of data is lost here because we don't do padding and # of elts is odd
+(define out4 (max-pool-2d{| 108 1 2 54} out3))
 ;; Layer 5
-;; (define w5 (int->float iota{| [64 32 3 3]}))
-;; (define out5_conv (conv-2d-channel{| 53 2 31 52 1 0} out4 w5 0.0))
-;; (define out5_norm_box (batch-norm-2d{| 51 64}
-;;                         out5_conv
-;;                         (replicate{float | [64] []} 0.0)
-;;                         (replicate{float | [64] []} 0.0)
-;;                         (int->float iota{| [64]})
-;;                         #f))
-;; (define out5_norm (unbox (#0 out5_norm_box) (out) out))
-;; (define out5 (leaky-relu out5_norm))
-;; out5
+(define w5 (int->float iota{| [64 32 3 3]}))
+(define out5_conv (conv-2d-channel{| 53 2 31 52 1 0} out4 w5 0.0))
+(define out5_norm_box (batch-norm-2d{| 51 64}
+                         out5_conv
+                         (replicate{float | [64] []} 0.0)
+                         (replicate{float | [64] []} 0.0)
+                         (int->float iota{| [64]})
+                         #f))
+(define out5_norm (unbox (#0 out5_norm_box) (out) out))
+(define out5 (leaky-relu out5_norm))
+out5

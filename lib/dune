@@ -16,4 +16,4 @@
 (env
  (dev
   (flags
-   (:standard -w -30))))
+   (:standard -w -30 -warn-error -32))))

@@ -213,7 +213,9 @@ let rec substituteExpr subVar subValue : Expr.t -> Expr.t option =
   | Ref { id; type' = _ } as expr ->
     return (if Identifier.equal id subVar then subValue else expr)
   | Frame { elements; dimension; type' } ->
-    let%map elements = elements |> List.map ~f:(substituteExpr subVar subValue) |> Option.all in
+    let%map elements =
+      elements |> List.map ~f:(substituteExpr subVar subValue) |> Option.all
+    in
     Frame { elements; dimension; type' }
   | BoxValue { box; type' } ->
     let%map box = substituteExpr subVar subValue box in
@@ -324,7 +326,9 @@ let rec substituteExpr subVar subValue : Expr.t -> Expr.t option =
     let%map args = args |> List.map ~f:(substituteExpr subVar subValue) |> Option.all in
     ScalarPrimitive { op; args; type' }
   | Values { elements; type' } ->
-    let%map elements = elements |> List.map ~f:(substituteExpr subVar subValue) |> Option.all in
+    let%map elements =
+      elements |> List.map ~f:(substituteExpr subVar subValue) |> Option.all
+    in
     Values { elements; type' }
   | TupleDeref { tuple; index; type' } ->
     let%map tuple = substituteExpr subVar subValue tuple in
@@ -337,61 +341,61 @@ let rec substituteExpr subVar subValue : Expr.t -> Expr.t option =
     Unzip { unzipArg; type' }
 ;;
 
-let constantFold (op: Expr.scalarOp) (args: Expr.t list) (type': Type.t): Expr.t = 
+let constantFold (op : Expr.scalarOp) (args : Expr.t list) (type' : Type.t) : Expr.t =
   match op, args with
-     | Add, [ Literal (IntLiteral a); Literal (IntLiteral b) ] ->
-       Literal (IntLiteral Int.(a + b))
-     | Add, [ Literal (IntLiteral 0); value ] | Add, [ value; Literal (IntLiteral 0) ] ->
-       value
-     | Sub, [ Literal (IntLiteral a); Literal (IntLiteral b) ] ->
-       Literal (IntLiteral (a - b))
-     | Sub, [ value; Literal (IntLiteral 0) ] -> value
-     | Mul, [ Literal (IntLiteral a); Literal (IntLiteral b) ] ->
-       Literal (IntLiteral Int.(a * b))
-     | Mul, [ Literal (IntLiteral 1); value ] | Mul, [ value; Literal (IntLiteral 1) ] ->
-       value
-     | Mul, [ Literal (IntLiteral 0); _ ] | Mul, [ _; Literal (IntLiteral 0) ] ->
-       (* DISCARD!!! *)
-       Literal (IntLiteral 0)
-     | Div, [ Literal (IntLiteral a); Literal (IntLiteral b) ] ->
-       Literal (IntLiteral (a / b))
-     | Div, [ value; Literal (IntLiteral 1) ] -> value
-     | If, [ Literal (BooleanLiteral true); then'; _ ] -> then'
-     | If, [ Literal (BooleanLiteral false); _; else' ] -> else'
-     | And, [ Literal (BooleanLiteral true); value ]
-     | And, [ value; Literal (BooleanLiteral true) ] -> value
-     | And, [ Literal (BooleanLiteral false); _ ]
-     | And, [ _; Literal (BooleanLiteral false) ] ->
-       (* DISCARD!!! *)
-       Literal (BooleanLiteral false)
-     | Or, [ Literal (BooleanLiteral false); value ]
-     | Or, [ value; Literal (BooleanLiteral false) ] -> value
-     | Or, [ Literal (BooleanLiteral true); _ ] | Or, [ _; Literal (BooleanLiteral true) ]
-       ->
-       (* DISCARD!!! *)
-       Literal (BooleanLiteral true)
-     | Not, [ Literal (BooleanLiteral b) ] -> Literal (BooleanLiteral (not b))
-     | Equal, [ Literal (IntLiteral a); Literal (IntLiteral b) ] ->
-       Literal (BooleanLiteral (a = b))
-     | Ne, [ Literal (IntLiteral a); Literal (IntLiteral b) ] ->
-       Literal (BooleanLiteral (a <> b))
-     | Lt, [ Literal (IntLiteral a); Literal (IntLiteral b) ] ->
-       Literal (BooleanLiteral (a < b))
-     | LtEq, [ Literal (IntLiteral a); Literal (IntLiteral b) ] ->
-       Literal (BooleanLiteral (a <= b))
-     | Gt, [ Literal (IntLiteral a); Literal (IntLiteral b) ] ->
-       Literal (BooleanLiteral (a > b))
-     | GtEq, [ Literal (IntLiteral a); Literal (IntLiteral b) ] ->
-       Literal (BooleanLiteral (a >= b))
-     | LtF, [ Literal (FloatLiteral a); Literal (FloatLiteral b) ] ->
-       Literal (BooleanLiteral Float.(a < b))
-     | LtEqF, [ Literal (FloatLiteral a); Literal (FloatLiteral b) ] ->
-       Literal (BooleanLiteral Float.(a <= b))
-     | GtF, [ Literal (FloatLiteral a); Literal (FloatLiteral b) ] ->
-       Literal (BooleanLiteral Float.(a > b))
-     | GtEqF, [ Literal (FloatLiteral a); Literal (FloatLiteral b) ] ->
-       Literal (BooleanLiteral Float.(a >= b))
-     | _ -> ScalarPrimitive { op; args; type' };;
+  | Add, [ Literal (IntLiteral a); Literal (IntLiteral b) ] ->
+    Literal (IntLiteral Int.(a + b))
+  | Add, [ Literal (IntLiteral 0); value ] | Add, [ value; Literal (IntLiteral 0) ] ->
+    value
+  | Sub, [ Literal (IntLiteral a); Literal (IntLiteral b) ] ->
+    Literal (IntLiteral (a - b))
+  | Sub, [ value; Literal (IntLiteral 0) ] -> value
+  | Mul, [ Literal (IntLiteral a); Literal (IntLiteral b) ] ->
+    Literal (IntLiteral Int.(a * b))
+  | Mul, [ Literal (IntLiteral 1); value ] | Mul, [ value; Literal (IntLiteral 1) ] ->
+    value
+  | Mul, [ Literal (IntLiteral 0); _ ] | Mul, [ _; Literal (IntLiteral 0) ] ->
+    (* DISCARD!!! *)
+    Literal (IntLiteral 0)
+  | Div, [ Literal (IntLiteral a); Literal (IntLiteral b) ] ->
+    Literal (IntLiteral (a / b))
+  | Div, [ value; Literal (IntLiteral 1) ] -> value
+  | If, [ Literal (BooleanLiteral true); then'; _ ] -> then'
+  | If, [ Literal (BooleanLiteral false); _; else' ] -> else'
+  | And, [ Literal (BooleanLiteral true); value ]
+  | And, [ value; Literal (BooleanLiteral true) ] -> value
+  | And, [ Literal (BooleanLiteral false); _ ]
+  | And, [ _; Literal (BooleanLiteral false) ] ->
+    (* DISCARD!!! *)
+    Literal (BooleanLiteral false)
+  | Or, [ Literal (BooleanLiteral false); value ]
+  | Or, [ value; Literal (BooleanLiteral false) ] -> value
+  | Or, [ Literal (BooleanLiteral true); _ ] | Or, [ _; Literal (BooleanLiteral true) ] ->
+    (* DISCARD!!! *)
+    Literal (BooleanLiteral true)
+  | Not, [ Literal (BooleanLiteral b) ] -> Literal (BooleanLiteral (not b))
+  | Equal, [ Literal (IntLiteral a); Literal (IntLiteral b) ] ->
+    Literal (BooleanLiteral (a = b))
+  | Ne, [ Literal (IntLiteral a); Literal (IntLiteral b) ] ->
+    Literal (BooleanLiteral (a <> b))
+  | Lt, [ Literal (IntLiteral a); Literal (IntLiteral b) ] ->
+    Literal (BooleanLiteral (a < b))
+  | LtEq, [ Literal (IntLiteral a); Literal (IntLiteral b) ] ->
+    Literal (BooleanLiteral (a <= b))
+  | Gt, [ Literal (IntLiteral a); Literal (IntLiteral b) ] ->
+    Literal (BooleanLiteral (a > b))
+  | GtEq, [ Literal (IntLiteral a); Literal (IntLiteral b) ] ->
+    Literal (BooleanLiteral (a >= b))
+  | LtF, [ Literal (FloatLiteral a); Literal (FloatLiteral b) ] ->
+    Literal (BooleanLiteral Float.(a < b))
+  | LtEqF, [ Literal (FloatLiteral a); Literal (FloatLiteral b) ] ->
+    Literal (BooleanLiteral Float.(a <= b))
+  | GtF, [ Literal (FloatLiteral a); Literal (FloatLiteral b) ] ->
+    Literal (BooleanLiteral Float.(a > b))
+  | GtEqF, [ Literal (FloatLiteral a); Literal (FloatLiteral b) ] ->
+    Literal (BooleanLiteral Float.(a >= b))
+  | _ -> ScalarPrimitive { op; args; type' }
+;;
 
 (* Perform the following optimizations:
    - Copy propogation
@@ -487,7 +491,7 @@ let rec optimize : Expr.t -> Expr.t =
     (match args with
      | [] -> Frame { dimension = 0; elements = []; type' }
      | arg :: [] -> arg
-     | _  as args -> Append { args; type' })
+     | _ as args -> Append { args; type' })
   | Let { args; body; type' } ->
     (* Do an initial simplification of the argument values and the body *)
     let args =
@@ -502,8 +506,7 @@ let rec optimize : Expr.t -> Expr.t =
       List.fold args ~init:([], body) ~f:(fun (argsAcc, body) arg ->
         let argCount = Counts.get bodyCounts arg.binding in
         if argCount.count = 0
-        then
-          (* No usages, so drop the arg *)
+        then (* No usages, so drop the arg *)
           argsAcc, body
         else if (argCount.count = 1 && not argCount.inLoop) || nonComputational arg.value
         then (
@@ -536,8 +539,7 @@ let rec optimize : Expr.t -> Expr.t =
     let mapBodyCounts = getCounts mapBody in
     let mapArgs =
       (* all bindings not used are discarded *)
-      List.filter mapArgs ~f:(fun arg ->
-        (Counts.get mapBodyCounts arg.binding).count > 0)
+      List.filter mapArgs ~f:(fun arg -> (Counts.get mapBodyCounts arg.binding).count > 0)
     in
     (* all bindings not used are discarded *)
     let mapIotas =
@@ -657,6 +659,11 @@ let resolveDepsAndDeclareHoistings ~hoistings body =
           List.partition_map hoistings ~f:(fun h ->
             if Counts.usesAny h.counts (Bindings undeclared) then Second h else First h)
         in
+        (* hoistings *)
+        (* |> List.map ~f:(fun d -> d.variableDeclaration.binding) *)
+        (* |> [%sexp_of: Identifier.t list] *)
+        (* |> Sexp.to_string_hum *)
+        (* |> Stdio.prerr_endline; *)
         assert (not (List.is_empty declarable));
         let newUndeclared =
           List.fold declarable ~init:undeclared ~f:(fun undeclared declaration ->
@@ -679,7 +686,7 @@ let resolveDepsAndDeclareHoistings ~hoistings body =
 
 (* Hoist variables that can be hoisted. Maps are also cleaned up while doing
    this. (nested maps with empty frames that can be flattened are, and maps
-   with empty frames and no args are removed) 
+   with empty frames and no args are removed)
    Returns expr with hoisted expressions and a list of hoistings to propagate up *)
 let rec hoistDeclarations : Expr.t -> Expr.t * hoisting list = function
   | Ref _ as ref -> ref, []
@@ -1093,17 +1100,28 @@ and hoistExpressionsInBody loopBarrier body ~bindings =
 let simplify expr =
   let open State.Let_syntax in
   let rec loop expr =
+    (* return @@ optimize expr *)
+    (* let optimized = optimize expr in *)
+    (* Stdio.print_endline *)
+    (*   (Printf.sprintf *)
+    (*      "Before tuple elimination:\n%s" *)
+    (*      (Sexp.to_string_hum (Expr.sexp_of_t (optimize expr)))); *)
+    (* let%bind { res = tupleReduced; droppedAny } = TupleReduce.reduceTuples optimized in *)
+    (* if not droppedAny then return optimized else loop tupleReduced *)
+    let optimized1 = optimize expr in
+    (* Stdio.print_endline *)
+    (*   (Printf.sprintf "Optimized1 :\n%s" (Sexp.to_string_hum (Expr.sexp_of_t optimized1))); *)
     (* Hoist variables that can be hoisted *)
-    let decHoisted, hoistings = hoistDeclarationsInBody expr ~bindings:All in
+    let decHoisted, hoistings = hoistDeclarationsInBody optimized1 ~bindings:All in
     assert (List.length hoistings = 0);
     (* Perform standard optimizations *)
-    let optimized = optimize decHoisted in
+    let optimized2 = optimize decHoisted in
     (* Re-hoist and re-optimize if anything changed *)
-    if Expr.equal decHoisted optimized
+    if Expr.equal decHoisted optimized2
     then (
       (* Hoist expressions that can be hoisted *)
       let%bind exprHoistedWithoutDecs, hoistings =
-        hoistExpressionsInBody All optimized ~bindings:All |> HoistState.toSimplifyState
+        hoistExpressionsInBody All optimized2 ~bindings:All |> HoistState.toSimplifyState
       in
       let exprHoisted =
         match hoistings with
@@ -1115,14 +1133,15 @@ let simplify expr =
       in
       (* Stdio.print_endline *)
       (*   (Printf.sprintf *)
-      (*      "Before tuple elimination:\n%s" *)
+      (*      "Before tuple elimination 2:\n%s" *)
       (*      (Sexp.to_string_hum (Expr.sexp_of_t exprHoisted))); *)
       (* return exprHoisted *)
       (* Reduce tuples (remove unused elements) *)
-      let%bind { res = reduced; droppedAny } = TupleReduce.reduceTuples exprHoisted in
-      (* If reducing tuples did anything, loop. Otherwise, return *)
-      if droppedAny then loop reduced else return exprHoisted)
-    else loop optimized
+      (* let%bind { res = reduced; droppedAny } = TupleReduce.reduceTuples exprHoisted in *)
+      (* (\* If reducing tuples did anything, loop. Otherwise, return *\) *)
+      (* if droppedAny then loop reduced else return exprHoisted *)
+      return exprHoisted)
+    else loop optimized2
   in
   loop expr
 ;;
