@@ -60,6 +60,34 @@ module Captures = struct
       }
   ;;
 
+  let rec getExprLetBindings : type l. (l, 'a) Expr.t -> Identifier.t list =
+    fun expr ->
+    match expr with
+    | Let { args; body } ->
+      List.map args ~f:(fun { binding; value = _ } -> binding) @ getExprLetBindings body
+    | Ref _ -> []
+    | BoxValue { box; type' = _ } -> getExprLetBindings box
+    | IndexLet { indexArgs = _; body; type' = _ } -> getExprLetBindings body
+    | MallocLet { memArgs = _; body } -> getExprLetBindings body
+    | ReifyDimensionIndex _ -> []
+    | ShapeProd _ -> []
+    | LoopBlock lb -> getExprLetBindings lb.mapBody
+    | LoopKernel _ -> []
+    | Box { type' = _; indices = _; body } -> getExprLetBindings body
+    | Literal _ -> []
+    | Values { elements; type' = _ } ->
+      List.join (List.map ~f:getExprLetBindings elements)
+    | ScalarPrimitive _ -> []
+    | TupleDeref { tuple; index = _; type' = _ } -> getExprLetBindings tuple
+    | ContiguousSubArray
+        { arrayArg; indexArg; originalShape = _; resultShape = _; type' = _ } ->
+      getExprLetBindings arrayArg @ getExprLetBindings indexArg
+    | Eseq { statement = _; expr; type' = _ } -> getExprLetBindings expr
+    | Getmem _ -> []
+    | IfParallelismHitsCutoff { then'; else'; type' = _; parallelism = _; cutoff = _ } ->
+      getExprLetBindings then' @ getExprLetBindings else'
+  ;;
+
   let getInDim Index.{ const = _; refs; lens } =
     (refs |> Map.keys |> getList ~f:(of_index Sort.Dim))
     + (lens |> Map.keys |> getList ~f:(of_index Sort.Shape))
@@ -143,10 +171,12 @@ module Captures = struct
         ; consumer
         ; type' = _
         } ->
+      let mapBodyLetBindings = getExprLetBindings mapBody in
       let bodyBindings =
         List.map mapArgs ~f:(fun arg -> arg.binding)
         @ List.map mapMemArgs ~f:(fun arg -> arg.memBinding)
         @ mapIotas
+        @ mapBodyLetBindings
         |> Set.of_list (module Identifier)
       in
       let mapArgCaptures = getList mapArgs ~f:(fun arg -> of_ref arg.ref) in
@@ -227,7 +257,13 @@ module Captures = struct
     | ComputeForSideEffects expr -> getInExpr expr
     | Statements statements -> getList statements ~f:getInStatement
     | SLet { args; body } ->
-      getList args ~f:(fun arg -> getInExpr arg.value) + getInStatement body
+      let bindings =
+        Set.of_list
+          (module Identifier)
+          (List.map args ~f:(fun { binding; value = _ } -> binding))
+      in
+      let argCaptures = getList args ~f:(fun arg -> getInExpr arg.value) in
+      diff (argCaptures + getInStatement body) bindings
     | SMallocLet { memArgs; body } ->
       let argCaptures = getList memArgs ~f:(fun arg -> getInType arg.memType) in
       let bindings =

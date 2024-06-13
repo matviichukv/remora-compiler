@@ -123,6 +123,7 @@ let rec getUsesInExpr : Expr.t -> Set.M(Identifier).t = function
     Set.union_list (module Identifier) (typeUsages :: bodyUsages :: argsUsages)
   | LoopBlock
       { frameShape
+      ; label = _
       ; mapArgs
       ; mapIotas
       ; mapBody
@@ -206,6 +207,7 @@ and getUsesInConsumer consumer =
     Set.union_list
       (module Identifier)
       [ Set.diff (getUsesInExpr body) (Set.add arrayBindings zeroArg.zeroBinding)
+      ; getUsesInExpr zeroArg.zeroValue
       ; getUsesInIndex (Dimension d)
       ; getUsesInType type'
       ]
@@ -237,34 +239,6 @@ type mapValueLocation =
       (** Represents a tuple, which may contain mapValues in its elements *)
 [@@deriving sexp_of]
 
-(* let rec extendMapRefs mapRefs =  *)
-(*   let open Expr in *)
-(*   function *)
-(*   | Ref { id = _; type' = _ } -> mapRefs *)
-(*   | Frame _ -> mapRefs *)
-(*   | BoxValue _ -> mapRefs *)
-(*   | IndexLet { indexArgs = _; body; type' = _ } -> extendMapRefs mapRefs body *)
-(*   | ReifyIndex _ -> mapRefs *)
-(*   | ShapeProd _ -> mapRefs *)
-(*   | Let { args; body; type' = _ } -> *)
-(*     let mapRefs = *)
-(*       List.fold args ~init:mapRefs ~f:(fun acc { binding; value } -> *)
-(*         match getMapValue mapRefs value with *)
-(*         | Some mapValue -> Map.set acc ~key:binding ~data:mapValue *)
-(*         | None -> acc) *)
-(*     in *)
-(*     extendMapRefs mapRefs body *)
-(*   | LoopBlock _ -> mapRefs *)
-(*   | Box _ -> mapRefs *)
-(*   | Literal _ -> mapRefs *)
-(*   | Values { elements; type' = _ } -> *)
-(*     raise Unreacha *)
-(*   | TupleDeref { tuple; index; type' = _ } -> *)
-(*     (match getMapValue mapRefs tuple with *)
-(*      | Some (Tuple mapValues) -> List.nth mapValues index |> Option.join *)
-(*      | Some (Value derefs) -> Some (Value (index :: derefs)) *)
-(*      | None -> None) *)
-(*   | ScalarPrimitive _ | ContiguousSubArray _ | Append _ | Zip _ | Unzip _ -> mapRefs *)
 let rec getMapValue mapRefs =
   let open Expr in
   function
@@ -289,6 +263,42 @@ let rec getMapValue mapRefs =
     Some (Tuple (List.map elements ~f:(getMapValue mapRefs)))
   | TupleDeref { tuple; index; type' = _ } ->
     (match getMapValue mapRefs tuple with
+     | Some (Tuple mapValues) -> List.nth mapValues index |> Option.join
+     | Some (Value derefs) -> Some (Value (index :: derefs))
+     | None -> None)
+  | ScalarPrimitive _ | ContiguousSubArray _ | Append _ | Zip _ | Unzip _ -> None
+;;
+
+let rec getMapValueWithLoopBlockRoot mapRefs loopBlock mapValueLocation =
+  let open Expr in
+  function
+  | Ref { id; type' = _ } -> Map.find mapRefs id
+  | Frame _ -> None
+  | BoxValue _ -> None
+  | IndexLet { indexArgs = _; body; type' = _ } ->
+    getMapValueWithLoopBlockRoot mapRefs loopBlock mapValueLocation body
+  | ReifyIndex _ -> None
+  | ShapeProd _ -> None
+  | Let { args; body; type' = _ } ->
+    let mapRefs =
+      List.fold args ~init:mapRefs ~f:(fun acc { binding; value } ->
+        match getMapValueWithLoopBlockRoot mapRefs loopBlock mapValueLocation value with
+        | Some mapValue -> Map.set acc ~key:binding ~data:mapValue
+        | None -> acc)
+    in
+    getMapValueWithLoopBlockRoot mapRefs loopBlock mapValueLocation body
+  | LoopBlock lb ->
+    if Expr.equal_loopBlock lb loopBlock then Some mapValueLocation else None
+  | Box _ -> None
+  | Literal _ -> None
+  | Values { elements; type' = _ } ->
+    Some
+      (Tuple
+         (List.map
+            elements
+            ~f:(getMapValueWithLoopBlockRoot mapRefs loopBlock mapValueLocation)))
+  | TupleDeref { tuple; index; type' = _ } ->
+    (match getMapValueWithLoopBlockRoot mapRefs loopBlock mapValueLocation tuple with
      | Some (Tuple mapValues) -> List.nth mapValues index |> Option.join
      | Some (Value derefs) -> Some (Value (index :: derefs))
      | None -> None)
@@ -422,6 +432,10 @@ let rec liftFrom
          |> Set.of_list (module Identifier)
        in
        let capturables = Set.union capturables capturableBindings in
+       (* Stdio.print_endline *)
+       (*   (Printf.sprintf *)
+       (*      "Capturables from let liftFrom: %s" *)
+       (*      (Sexp.to_string_hum ([%sexp_of: Identifier.t list] (Set.to_list capturables)))); *)
        (* Extend map refs with any map values that are bound in this let *)
        let extendedMapRefs =
          List.fold args ~init:mapRefs ~f:(fun acc { binding; value } ->
@@ -456,7 +470,43 @@ let rec liftFrom
           let liftedArgs, args =
             List.partition_tf args ~f:(fun arg -> Set.mem lifts arg.binding)
           in
-          let captures = Set.diff extraction.captures lifts in
+          let liftsDeps =
+            liftedArgs
+            |> List.map ~f:(fun arg -> getUsesInExpr arg.value)
+            |> Set.union_list (module Identifier)
+          in
+          let argsDeps =
+            args
+            |> List.map ~f:(fun arg -> getUsesInExpr arg.value)
+            |> Set.union_list (module Identifier)
+          in
+          let captures =
+            Set.union argsDeps (Set.union (Set.diff extraction.captures lifts) liftsDeps)
+          in
+          (* Stdio.print_endline *)
+          (* (Printf.sprintf *)
+          (* "Lifts: %s" *)
+          (* (Sexp.to_string_hum ([%sexp_of: Identifier.t list] (Set.to_list lifts)))); *)
+          (* Stdio.print_endline *)
+          (* (Printf.sprintf *)
+          (* "Lifts deps: %s" *)
+          (* (Sexp.to_string_hum *)
+          (* ([%sexp_of: Identifier.t list] (Set.to_list liftsDeps)))); *)
+          (* Stdio.print_endline *)
+          (* (Printf.sprintf *)
+          (* "Extraction captures: %s" *)
+          (* (Sexp.to_string_hum *)
+          (* ([%sexp_of: Identifier.t list] (Set.to_list extraction.captures)))); *)
+          (* Stdio.print_endline *)
+          (* (Printf.sprintf *)
+          (* "Captures: %s" *)
+          (* (Sexp.to_string_hum ([%sexp_of: Identifier.t list] (Set.to_list captures)))); *)
+          (* Stdio.print_endline *)
+          (* (Printf.sprintf *)
+          (* "non lifted args: %s" *)
+          (* (Sexp.to_string_hum *)
+          (* ([%sexp_of: Identifier.t list] *)
+          (* (List.map args ~f:(fun arg -> arg.binding))))); *)
           let addLifts body =
             let body = extraction.addLifts body in
             Let { args = liftedArgs; body; type' = Expr.type' body }
@@ -465,6 +515,7 @@ let rec liftFrom
         | None -> None, Let { args; body; type' }))
   | LoopBlock
       { frameShape
+      ; label = _
       ; mapArgs
       ; mapIotas
       ; mapBody
@@ -497,13 +548,14 @@ let rec liftFrom
     (* |> Printf.sprintf "Map Refs: \n%s" *)
     (* |> Stdio.print_endline; *)
     (* Stdio.print_endline *)
-    (*   (Printf.sprintf "loop block: \n%s" (Sexp.to_string_hum (Expr.sexp_of_t loopBlock))); *)
+    (* (Printf.sprintf "loop block in liftFrom: \n%s" (Sexp.to_string_hum (Expr.sexp_of_t loopBlock))); *)
     (* Stdio.print_endline *)
     (*   (Printf.sprintf "target: \n%s" (Sexp.to_string_hum (Expr.sexp_of_loopBlock target))); *)
     let bindings = List.map mapArgs ~f:(fun arg -> arg.binding) @ mapIotas in
     let bodyCaptures =
       Set.diff (getUsesInExpr mapBody) (Set.of_list (module Identifier) bindings)
     in
+    (* Stdio.print_endline (Printf.sprintf "body captures: %s" (Sexp.to_string_hum ([%sexp_of: Identifier.t list] (Set.to_list bodyCaptures)))); *)
     let consumerCaptures = getUsesInConsumer consumer in
     let bodyAndConsumerOk =
       Set.is_subset (Set.union bodyCaptures consumerCaptures) ~of_:capturables
@@ -527,11 +579,6 @@ let rec liftFrom
     (*      (List.is_empty badArgs) *)
     (*      bodyAndConsumerOk *)
     (*      consumersAreCompatible); *)
-    (* badArgs *)
-    (* |> [%sexp_of: mapArg list] *)
-    (* |> Sexp.to_string_hum *)
-    (* |> Printf.sprintf "Bad args: %s\n" *)
-    (* |> Stdio.print_endline; *)
     (* badArgs *)
     (* |> List.map ~f:(fun a -> Map.find mapRefs a.ref.id) *)
     (* |> [%sexp_of: mapValueLocation option list] *)
@@ -567,11 +614,11 @@ let rec liftFrom
           { args =
               List.map argsToRemove ~f:(fun ({ binding; ref = _ }, derefs) ->
                 (* Stdio.print_endline *)
-                (*   (Printf.sprintf *)
-                (*      "Lifting %s %s %s" *)
-                (*      (Identifier.show binding) *)
-                (*      (Identifier.show ref.id) *)
-                (*      (Sexp.to_string_hum ([%sexp_of: int list] derefs))); *)
+                (* (Printf.sprintf *)
+                (*    "Lifting %s %s %s" *)
+                (*    (Identifier.show binding) *)
+                (*    (Identifier.show ref.id) *)
+                (*    (Sexp.to_string_hum ([%sexp_of: int list] derefs))); *)
                 let rec derefValue derefs value =
                   match derefs with
                   | index :: restDerefs ->
@@ -601,7 +648,11 @@ let rec liftFrom
         |> List.map ~f:(fun arg -> arg.ref.id)
         |> Set.of_list (module Identifier)
       in
-      let captures = Set.union bodyCaptures argCaptures in
+      let captures = Set.union bodyCaptures (Set.union argCaptures consumerCaptures) in
+      (* Stdio.print_endline *)
+      (* (Printf.sprintf *)
+      (* "Captures from liftFrom: %s" *)
+      (* (Sexp.to_string_hum ([%sexp_of: Identifier.t list] (Set.to_list captures)))); *)
       let%map consumerExtraction =
         match consumer with
         | Some op ->
@@ -609,6 +660,12 @@ let rec liftFrom
           Some { op; consumerBinding }
         | None -> return None
       in
+      let liftedConsumerCaptures =
+        match consumerExtraction with
+        | None -> Set.empty (module Identifier)
+        | Some ext -> getUsesInConsumer (Some ext.op)
+      in
+      let captures = Set.union liftedConsumerCaptures captures in
       ( Some
           { captures
           ; addLifts = (fun body -> body)
@@ -1108,8 +1165,8 @@ let rec fuseLoops (scope : Set.M(Identifier).t)
       | Let { args; body; type' = _ } ->
         let argsCorrectBind =
           List.find_map args ~f:(fun { binding; value } ->
-            let foo = findActualArgBinding value binding loopBlock in
-            match foo with
+            let actualBindingOpt = findActualArgBinding value binding loopBlock in
+            match actualBindingOpt with
             | Some binding -> Some binding
             | None -> None)
           (* if Nested.Expr.equal value loopBlock then Some binding else None) *)
@@ -1163,8 +1220,8 @@ let rec fuseLoops (scope : Set.M(Identifier).t)
       (* | Some v -> *)
       let loc =
         match loopBlock.mapResults with
-        | [] -> raise (Unreachable.Error "")
-        | [ _ ] -> Value []
+        | [] -> Value []
+        | [ _ ] -> Tuple [ Some (Value []) ]
         | mapResults -> Tuple (mapResultsToDerefs mapResults loopBlock.mapBodyMatcher)
         (* match v with *)
         (* | Value v -> Value v *)
@@ -1181,7 +1238,7 @@ let rec fuseLoops (scope : Set.M(Identifier).t)
         (* |> Printf.sprintf "Map Value Loc (try fusing): %s" *)
         (* |> Stdio.print_endline; *)
         (* Stdio.print_endline *)
-        (*   (Printf.sprintf "Trying to liftFrom %s" (Identifier.show argBinding)); *)
+        (* (Printf.sprintf "Trying to liftFrom %s" (Identifier.show argBinding)); *)
         (* body *)
         (* |> [%sexp_of: t] *)
         (* |> Sexp.to_string_hum *)
@@ -1192,6 +1249,24 @@ let rec fuseLoops (scope : Set.M(Identifier).t)
         (* |> Sexp.to_string_hum *)
         (* |> Printf.sprintf "TargetloopBlock: %s" *)
         (* |> Stdio.print_endline; *)
+        (* let initMapRefs = *)
+        (*   if isDirectArgBinding argBinding (LoopBlock loopBlock) *)
+        (*   then Map.singleton (module Identifier) argBinding mapValueLocation *)
+        (*   else ( *)
+        (*     let argBindingBody = *)
+        (*       List.find_map_exn args ~f:(fun { binding; value } -> *)
+        (*         if Identifier.equal binding argBinding then Some value else None) *)
+        (*     in *)
+        (*     let actualMapValueLocationOption = *)
+        (*       getMapValueWithLoopBlockRoot *)
+        (*         (Map.empty (module Identifier)) *)
+        (*         loopBlock *)
+        (*         (Tuple [ Some mapValueLocation; None ]) *)
+        (*         argBindingBody *)
+        (*     in *)
+        (*     let actualMapValueLocation = Option.value_exn actualMapValueLocationOption in *)
+        (*     Map.singleton (module Identifier) argBinding actualMapValueLocation) *)
+        (* in *)
         let initMapRefs =
           if isDirectArgBinding argBinding (LoopBlock loopBlock)
           then
@@ -1210,13 +1285,17 @@ let rec fuseLoops (scope : Set.M(Identifier).t)
             (* We have the correct arg binding, it was just 'hidden' by other *)
             (* non-binding structures like tuple deref *)
             if Identifier.equal actualBinding argBinding
-            then Map.singleton (module Identifier) argBinding mapValueLocation
+            then
+              Map.singleton
+                (module Identifier)
+                argBinding
+                (Option.value_exn
+                   (getMapValueWithLoopBlockRoot
+                      (Map.empty (module Identifier))
+                      loopBlock
+                      (Tuple [ Some mapValueLocation; None ])
+                      argBindingBody))
             else (
-              (* Stdio.print_endline *)
-              (*   (Printf.sprintf *)
-              (*      "Actual arg binding %s with mapValue %s" *)
-              (*      (Identifier.show actualBinding) *)
-              (*      (Sexp.to_string_hum ([%sexp_of: mapValueLocation] mapValueLocation))); *)
               let mapRefs =
                 (* We pad with extra tuple because this is not just used for offsets inside maps but rather the outside of it *)
                 Map.singleton
@@ -1233,7 +1312,7 @@ let rec fuseLoops (scope : Set.M(Identifier).t)
         (* initMapRefs *)
         (* |> Map.sexp_of_m__t (module Identifier) sexp_of_mapValueLocation *)
         (* |> Sexp.to_string_hum *)
-        (* |> Printf.sprintf "Map Refs: \n%s" *)
+        (* |> Printf.sprintf "Init Map Refs: \n%s" *)
         (* |> Stdio.print_endline; *)
         let%bind extraction, body =
           liftFrom
@@ -1271,8 +1350,13 @@ let rec fuseLoops (scope : Set.M(Identifier).t)
              in
              loop [] args
            in
+           (* Stdio.print_endline *)
+           (*   (Printf.sprintf *)
+           (*      "Args - target: %s" *)
+           (*      (Sexp.to_string_hum ([%sexp_of: letArg list] argsMinusTarget))); *)
            let%bind blockResultBinding = FuseState.createId "fused-block-result"
-           and targetMapResultBinding = FuseState.createId "fusion-target-map-result" in
+           and targetMapResultBinding = FuseState.createId "fusion-target-map-result"
+           and mergedLoopBlockLabel = FuseState.createId "loop-block" in
            let rec extractTypesFromTuple (matcher : Expr.tupleMatch) (tupleType : Type.t)
              : Type.t Map.M(Identifier).t
              =
@@ -1339,6 +1423,10 @@ let rec fuseLoops (scope : Set.M(Identifier).t)
            (* |> Stdio.print_endline; *)
            (* targetMapResultElementBinding |> Identifier.show |> Stdio.print_endline; *)
            (* argBinding |> Identifier.show |> Stdio.print_endline; *)
+           (* Stdio.print_endline *)
+           (* (Printf.sprintf *)
+           (* "Block result binding: %s" *)
+           (* (Identifier.show blockResultBinding)); *)
            let res =
              Some
                (* Declare all args that don't contain the loop block first to
@@ -1357,6 +1445,7 @@ let rec fuseLoops (scope : Set.M(Identifier).t)
                                      (* Create the merged loop block *)
                                      LoopBlock
                                        { frameShape = loopBlock.frameShape
+                                       ; label = mergedLoopBlockLabel
                                        ; mapArgs = loopBlock.mapArgs @ liftedArgs
                                        ; mapIotas = loopBlock.mapIotas @ liftedIotas
                                        ; mapBody =
@@ -1471,17 +1560,20 @@ let rec fuseLoops (scope : Set.M(Identifier).t)
            let%bind fuseState =
              State.inspect ~f:(fun (s : FuseState.state) -> s.compilerState)
            in
-           let simplifiedResultState = Simplify.simplify result in
+           let simplifiedResultState = Simplify.localSimplify result in
            let newState, simplifiedResult = State.run simplifiedResultState fuseState in
            let newFuseState : FuseState.state =
              { compilerState = newState; fusedAny = true }
            in
            let%bind () = FuseState.set newFuseState in
            (* Stdio.print_endline *)
-           (*   (Printf.sprintf *)
-           (*      "Fusion result (tryFusingList): \n%s" *)
-           (*      (Sexp.to_string_hum (Expr.sexp_of_t result))); *)
-           (* return result *)
+           (* (Printf.sprintf *)
+           (* "Fusion result (tryFusingList): \n%s" *)
+           (* (Sexp.to_string_hum (Expr.sexp_of_t result))); *)
+           (* Stdio.print_endline *)
+           (* (Printf.sprintf *)
+           (* "Fusion result optimized: \n%s" *)
+           (* (Sexp.to_string_hum (Expr.sexp_of_t simplifiedResult))); *)
            fuseLoops scope simplifiedResult
          | None -> tryFusingList rest)
       | [] -> return (Let { args; body; type' })
@@ -1489,6 +1581,7 @@ let rec fuseLoops (scope : Set.M(Identifier).t)
     tryFusingList opportunities
   | LoopBlock
       { frameShape
+      ; label
       ; mapArgs
       ; mapIotas
       ; mapBody
@@ -1526,6 +1619,7 @@ let rec fuseLoops (scope : Set.M(Identifier).t)
     in
     LoopBlock
       { frameShape
+      ; label
       ; mapArgs
       ; mapIotas
       ; mapBody

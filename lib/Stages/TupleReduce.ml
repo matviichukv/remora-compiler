@@ -414,9 +414,40 @@ let rec reduceTuplesInExpr (request : TupleRequest.t) expr =
     assert (TupleRequest.isWhole request);
     return shapeProd
   | Append { args; type' } ->
-    let%map args =
-      args |> List.map ~f:(reduceTuplesInExpr request) |> ReduceTupleState.all
+    (* We need to 'break up' request into correctly-sized requests for each of the arguments
+       since the size is the result and we need per-arg sizes *)
+    let error = Unreachable.Error "Should not happen because would not type check" in
+    let requests =
+      List.map args ~f:(fun a ->
+        match Expr.type' a with
+        | Array { element = _; size } ->
+          (match request with
+           | Collection { subRequest; collectionType } ->
+             (match collectionType with
+              | Array arrReq ->
+                TupleRequest.Collection
+                  { subRequest; collectionType = Array { arrReq with size } }
+              | Sigma _ -> raise error)
+           | Whole -> request
+           | Element _ -> raise error
+           | Elements _ -> raise error)
+        | Sigma _ -> raise error
+        | Literal _ -> raise error
+        | Tuple _ -> raise error)
     in
+    (* Stdio.print_endline *)
+    (* (Printf.sprintf *)
+    (* "Append type:\n%s" *)
+    (* (Sexp.to_string_hum ([%sexp_of: Nested.Type.t] type'))); *)
+    let%map args =
+      args
+      |> List.zip_exn requests
+      |> List.map ~f:(fun (req, arg) -> reduceTuplesInExpr req arg)
+      |> ReduceTupleState.all
+    in
+    (* let%map args = *)
+    (* args |> List.map ~f:(reduceTuplesInExpr request) |> ReduceTupleState.all *)
+    (* in *)
     let type' = reduceTuplesType request type' in
     Expr.Append { args; type' }
   | Box { indices; body; bodyType; type' } ->
@@ -526,6 +557,10 @@ let rec reduceTuplesInExpr (request : TupleRequest.t) expr =
     let type' = reduceTuplesType request type' in
     Expr.BoxValue { box; type' }
   | ContiguousSubArray { arrayArg; indexArg; originalShape; resultShape; type' } ->
+    (* Stdio.print_endline *)
+    (* (Printf.sprintf *)
+    (* "TupleReduce subarray:\n %s" *)
+    (* (Sexp.to_string_hum ([%sexp_of: t] arrayArg))); *)
     let rec stripShapeFromRequest ~shape request =
       match shape with
       | [] -> request
@@ -556,6 +591,12 @@ let rec reduceTuplesInExpr (request : TupleRequest.t) expr =
           ; collectionType = Array { element = elementType; size = shapeHead }
           }
     in
+    (* Stdio.print_endline *)
+    (* (Printf.sprintf *)
+    (* "Subarray: \nshape: %s\ntype: %s\nrequest: %s" *)
+    (* (Sexp.to_string_hum ([%sexp_of: Index.shape] resultShape)) *)
+    (* (Sexp.to_string_hum ([%sexp_of: Nested.Type.t] type')) *)
+    (* (Sexp.to_string_hum ([%sexp_of: TupleRequest.t] request))); *)
     let cellRequest = stripShapeFromRequest ~shape:resultShape request in
     let arrayArgRequest =
       addShapeToRequest ~shape:originalShape (Expr.type' arrayArg) cellRequest
@@ -694,6 +735,7 @@ let rec reduceTuplesInExpr (request : TupleRequest.t) expr =
     Expr.Let { args; body = Let { args = unpackers; body; type' }; type' }
   | LoopBlock
       { frameShape
+      ; label
       ; mapArgs
       ; mapIotas
       ; mapBody
@@ -791,6 +833,10 @@ let rec reduceTuplesInExpr (request : TupleRequest.t) expr =
         usages, Some reduce
       | Some (Fold { zeroArg; arrayArgs; reverse; body; d; character; type' }), _ ->
         let%bind body = reduceTuplesInExpr Whole body in
+        let%bind zeroArgBody = reduceTuplesInExpr Whole zeroArg.zeroValue in
+        let zeroArg =
+          Expr.{ zeroBinding = zeroArg.zeroBinding; zeroValue = zeroArgBody }
+        in
         let%bind caches = ReduceTupleState.getCaches () in
         let bindings =
           (zeroArg.zeroBinding, Expr.type' zeroArg.zeroValue)
@@ -927,10 +973,7 @@ let rec reduceTuplesInExpr (request : TupleRequest.t) expr =
           raise @@ TupleRequest.unexpected ~actual:mapRequest ~expected:"tuple"
       in
       let mapResults, _ = List.unzip resultIdsAndRequests in
-      let resultRequestsFromMap =
-        resultIdsAndRequests
-        (* List.map resultIdsAndRequests ~f:(fun (resultId, request) -> resultId, request) *)
-      in
+      let resultRequestsFromMap = resultIdsAndRequests in
       let resultRequestsFromConsumer =
         consumerUsages
         |> Set.to_list
@@ -940,6 +983,7 @@ let rec reduceTuplesInExpr (request : TupleRequest.t) expr =
         Map.of_alist_reduce
           (module Identifier)
           (resultRequestsFromMap @ resultRequestsFromConsumer)
+          (* TODO: check if this is correct because it looks weird *)
           ~f:(fun a _ -> a)
       in
       let rec makeMapBodyRequestAndMatcher (oldMatcher : Expr.tupleMatch)
@@ -1059,6 +1103,7 @@ let rec reduceTuplesInExpr (request : TupleRequest.t) expr =
         ~body:
           (Expr.LoopBlock
              { frameShape
+             ; label
              ; mapArgs
              ; mapIotas
              ; mapBody

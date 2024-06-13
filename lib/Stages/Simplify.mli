@@ -10,6 +10,7 @@ open! Base
     - Hoist variables *)
 
 val simplify : Nested.t -> (CompilerState.state, Nested.t, _) State.t
+val localSimplify : Nested.t -> (CompilerState.state, Nested.t, _) State.t
 
 module Stage (SB : Source.BuilderT) :
   CompilerPipeline.Stage

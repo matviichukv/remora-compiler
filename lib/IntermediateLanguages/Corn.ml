@@ -8,8 +8,8 @@ module Type = Nested.Type
 module Expr = struct
   type host = Host
   type device = Device
-  type parallel = Parallel
-  type sequential = Sequential
+  type parallel = Parallel [@@deriving equal]
+  type sequential = Sequential [@@deriving equal]
   type ref = Nested.Expr.ref
   type foldCharacter = Nested.Expr.foldCharacter
 
@@ -83,6 +83,7 @@ module Expr = struct
     ; mapBodyMatcher : tupleMatch
     ; mapResults : Identifier.t list
     ; consumer : (('lOuter, 'lInner, 'p) consumerOp, 'e) Maybe.t
+    ; indexMode : Nested.Expr.indexMode option
     ; type' : Type.tuple
     }
 
@@ -132,8 +133,8 @@ module Expr = struct
         ('lOuter, 'lInner) reduceLike
         -> ('lOuter, 'lInner, sequential) consumerOp
     | ScanSeq : ('lOuter, 'lInner) reduceLike -> ('lOuter, 'lInner, sequential) consumerOp
-    | ReducePar : (host, device) parReduce -> (host, device, parallel) consumerOp
-    | ScanPar : (host, device) reduceLike -> (host, device, parallel) consumerOp
+    | ReducePar : ('lOuter, 'lInner) parReduce -> ('lOuter, 'lInner, parallel) consumerOp
+    | ScanPar : ('lOuter, 'lInner) reduceLike -> ('lOuter, 'lInner, parallel) consumerOp
     | Scatter : scatter -> _ consumerOp
     | Fold : ('lOuter, 'lInner) fold -> ('lOuter, 'lInner, sequential) consumerOp
 
@@ -151,6 +152,7 @@ module Expr = struct
 
   and mapKernel =
     { frameShape : Index.shapeElement
+    ; indexMode : Nested.Expr.indexMode option
     ; mapArgs : mapArg list
     ; mapIotas : Identifier.t list
     ; mapBody : mapBody
@@ -230,7 +232,9 @@ module Expr = struct
     | ReifyIndex : reifyIndex -> _ t
     | ShapeProd : Index.shape -> _ t
     | Let : 'l let' -> 'l t
-    | LoopBlock : ('l, 'l, sequential, 'e) loopBlock -> 'l t
+    | LoopBlock : ('l, 'l, 'p, 'e) loopBlock -> 'l t
+    (* LoopKernel has to have a consumers -- that's why doesExist *)
+    (* Otherwise use MapKernel *)
     | LoopKernel : (host, device, parallel, Maybe.doesExist) loopBlock kernel -> host t
     | MapKernel : mapKernel kernel -> host t
     | Box : 'l box -> 'l t
@@ -448,12 +452,11 @@ module Expr = struct
         ]
 
     and sexp_of_consumerOp
-      : type a b p.
-        (a -> Sexp.t) -> (b -> Sexp.t) -> (p -> Sexp.t) -> (a, b, p) consumerOp -> Sexp.t
+      : type a b p. (a -> Sexp.t) -> (b -> Sexp.t) -> (a, b, p) consumerOp -> Sexp.t
       =
-      fun sexp_of_a sexp_of_b _ -> function
+      fun sexp_of_a sexp_of_b -> function
       | ReduceSeq reduce -> sexp_of_reduceLike sexp_of_a sexp_of_b reduce
-      | ReducePar reduce -> sexp_of_parReduce sexp_of_host sexp_of_device reduce
+      | ReducePar reduce -> sexp_of_parReduce sexp_of_a sexp_of_b reduce
       | ScanSeq scan -> sexp_of_reduceLike sexp_of_a sexp_of_b scan
       | ScanPar scan -> sexp_of_reduceLike sexp_of_a sexp_of_b scan
       | Fold fold -> sexp_of_fold sexp_of_a sexp_of_b fold
@@ -466,7 +469,6 @@ module Expr = struct
         ?kernel:bool
         -> (a -> Sexp.t)
         -> (b -> Sexp.t)
-        -> (p -> Sexp.t)
         -> x
         -> (a, b, p, e) loopBlock
         -> Sexp.t
@@ -474,7 +476,6 @@ module Expr = struct
       fun ?(kernel = false)
           sexp_of_a
           sexp_of_b
-          sexp_of_p
           _
           { frameShape
           ; mapArgs
@@ -483,10 +484,12 @@ module Expr = struct
           ; mapBodyMatcher
           ; mapResults
           ; consumer
+          ; indexMode
           ; type' = _
           } ->
       Sexp.List
         [ Sexp.Atom (if kernel then "loop-kernel" else "loop-block")
+        ; [%sexp_of: Nested.Expr.indexMode option] indexMode
         ; Sexp.List [ Sexp.Atom "frame-shape"; Index.sexp_of_shapeElement frameShape ]
         ; Sexp.List
             ([ Sexp.Atom "map"; Sexp.List (List.map mapArgs ~f:sexp_of_mapArg) ]
@@ -506,8 +509,7 @@ module Expr = struct
         ; Sexp.List
             [ Sexp.Atom "consumer"
             ; (match consumer with
-               | Just consumer ->
-                 sexp_of_consumerOp sexp_of_a sexp_of_b sexp_of_p consumer
+               | Just consumer -> sexp_of_consumerOp sexp_of_a sexp_of_b consumer
                | Nothing -> sexp_of_values sexp_of_a { elements = []; type' = [] })
             ]
         ]
@@ -527,11 +529,23 @@ module Expr = struct
       | MapBodySubMap subMap -> sexp_of_mapBodySubMap subMap
 
     and sexp_of_mapKernel
-      ({ frameShape; mapArgs; mapIotas; mapBody; mapBodyMatcher; mapResults; type' = _ } :
+      ({ indexMode
+       ; frameShape
+       ; mapArgs
+       ; mapIotas
+       ; mapBody
+       ; mapBodyMatcher
+       ; mapResults
+       ; type' = _
+       } :
         mapKernel)
       =
       Sexp.List
         ([ Sexp.Atom "map-kernel"
+         ; Sexp.List
+             [ Sexp.Atom "index-mode"
+             ; [%sexp_of: Nested.Expr.indexMode option] indexMode
+             ]
          ; Sexp.List [ Sexp.Atom "frame-shape"; Index.sexp_of_shapeElement frameShape ]
          ; Sexp.List
              (List.map mapArgs ~f:(fun { binding; ref } ->
@@ -632,16 +646,14 @@ module Expr = struct
       | ReifyIndex reifyIndex -> sexp_of_reifyIndex reifyIndex
       | ShapeProd shape ->
         Sexp.List [ Sexp.Atom "shape-prod"; [%sexp_of: Index.shape] shape ]
-      | LoopBlock loopBlock ->
-        sexp_of_loopBlock sexp_of_a sexp_of_a sexp_of_sequential () loopBlock
+      | LoopBlock loopBlock -> sexp_of_loopBlock sexp_of_a sexp_of_a () loopBlock
       | LoopKernel loopKernel ->
         sexp_of_kernel
           (sexp_of_loopBlock
              ~kernel:true
              sexp_of_host
              sexp_of_device
-             sexp_of_parallel
-             (sexp_of_consumerOp sexp_of_host sexp_of_device sexp_of_parallel))
+             (sexp_of_consumerOp sexp_of_host sexp_of_device))
           loopKernel
       | MapKernel mapKernel -> sexp_of_kernel sexp_of_mapKernel mapKernel
       | ContiguousSubArray contiguousSubArray ->

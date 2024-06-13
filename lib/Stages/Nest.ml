@@ -95,6 +95,7 @@ let rec nestArray : Nucleus.Expr.array -> (Nested.t, _) NestState.u =
     let type' = nestTypeArray type' in
     return (ReifyIndex { index; type' })
   | ArrayPrimitive (Map { args; iotaVar; frameShape; body; type' = _ }) ->
+    let%bind loopBlockLabel = NestState.createId "loop-block" in
     let rec decompose args parentIota frameShape =
       match frameShape with
       | [] ->
@@ -173,6 +174,7 @@ let rec nestArray : Nucleus.Expr.array -> (Nested.t, _) NestState.u =
                   ~tuple:
                     (LoopBlock
                        { frameShape = shapeElement
+                       ; label = loopBlockLabel
                        ; mapArgs
                        ; mapIotas = Option.to_list mapIota
                        ; mapBody
@@ -209,6 +211,7 @@ let rec nestArray : Nucleus.Expr.array -> (Nested.t, _) NestState.u =
   | ArrayPrimitive (Reduce { arg; zero; body; d; cellShape = _; character; type' }) ->
     let type' = nestTypeArray type' in
     let%bind productionBinding = NestState.createId "reduce-arg"
+    and loopBlockLabel = NestState.createId "loop-block"
     and argValue = nestArray arg.value in
     let arg =
       { firstBinding = arg.firstBinding
@@ -233,6 +236,7 @@ let rec nestArray : Nucleus.Expr.array -> (Nested.t, _) NestState.u =
             { tuple =
                 LoopBlock
                   { frameShape = Add d
+                  ; label = loopBlockLabel
                   ; mapArgs
                   ; mapIotas = []
                   ; mapBody
@@ -250,6 +254,7 @@ let rec nestArray : Nucleus.Expr.array -> (Nested.t, _) NestState.u =
       (Fold { zeroArg; arrayArgs; body; reverse; d; cellShape = _; character; type' }) ->
     let type' = nestTypeArray type' in
     let%bind zeroArgValue = nestArray zeroArg.value in
+    let%bind loopBlockLabel = NestState.createId "loop-block" in
     let zeroArg = { zeroBinding = zeroArg.binding; zeroValue = zeroArgValue } in
     let%bind arrays =
       arrayArgs
@@ -278,6 +283,7 @@ let rec nestArray : Nucleus.Expr.array -> (Nested.t, _) NestState.u =
             { tuple =
                 LoopBlock
                   { frameShape = Add d
+                  ; label = loopBlockLabel
                   ; mapArgs
                   ; mapIotas = []
                   ; mapBody
@@ -294,6 +300,7 @@ let rec nestArray : Nucleus.Expr.array -> (Nested.t, _) NestState.u =
   | ArrayPrimitive (Scatter { valuesArg; indicesArg; dIn; dOut; cellShape = _; type' }) ->
     let type' = nestTypeArray type' in
     let%bind valuesBinding = NestState.createId "scatter-values-arg"
+    and loopBlockLabel = NestState.createId "loop-block"
     and valuesArg = nestArray valuesArg
     and indicesBinding = NestState.createId "scatter-indices-arg"
     and indicesArg = nestArray indicesArg in
@@ -324,6 +331,7 @@ let rec nestArray : Nucleus.Expr.array -> (Nested.t, _) NestState.u =
             { tuple =
                 LoopBlock
                   { frameShape = Add dIn
+                  ; label = loopBlockLabel
                   ; mapArgs
                   ; mapIotas = []
                   ; mapBody
@@ -404,6 +412,7 @@ and nestAtom : Nucleus.Expr.atom -> (Nested.t, _) NestState.u =
 let nest (prog : Nucleus.t) : (CompilerState.state, Nested.t, _) State.t =
   let open NestState.Let_syntax in
   let%map prog = nestArray prog in
+  Stdio.prerr_endline "Nesting done";
   prog
 ;;
 

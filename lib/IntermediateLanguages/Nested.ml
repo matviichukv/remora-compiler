@@ -58,6 +58,12 @@ module Type = struct
 end
 
 module Expr = struct
+  type indexMode =
+    { allocatedThreads : int option
+    ; allocatedBlocks : int option
+    }
+  [@@deriving sexp_of, equal, compare]
+
   type ref =
     { id : Identifier.t
     ; type' : Type.t
@@ -137,9 +143,9 @@ module Expr = struct
     }
   [@@deriving compare]
 
-  (** returns a tuple of (map results (tuple of arrays, not array of tuples), consumer result (unit if None)) *)
   and loopBlock =
-    { frameShape : Index.shapeElement
+    { label : Identifier.t
+    ; frameShape : Index.shapeElement
     ; mapArgs : mapArg list
     ; mapIotas : Identifier.t list
     ; mapBody : t
@@ -148,6 +154,22 @@ module Expr = struct
     ; consumer : consumerOp option
     ; type' : Type.tuple
     }
+  (* loop block with labels and optional indexing *)
+
+  (* and loopBlock =
+    { frameShape : Index.shapeElement
+    ; mapArgs : mapArg list
+    ; mapIotas : Identifier.t list
+    ; mapBody : t
+    ; mapBodyMatcher : tupleMatch
+    ; mapResults : Identifier.t list
+    ; consumer : consumerOp option
+    ; type' : Type.tuple
+    ; label : Identifier.t
+    ; indexingModeMap : indexMode option
+    } *)
+
+  (** returns a tuple of (map results (tuple of arrays, not array of tuples), consumer result (unit if None)) *)
 
   and foldZeroArg =
     { zeroBinding : Identifier.t
@@ -493,11 +515,13 @@ module Expr = struct
       ; mapBodyMatcher
       ; mapResults
       ; consumer
+      ; label
       ; type' = _
       }
       =
       Sexp.List
         [ Sexp.Atom "loop-block"
+        ; [%sexp_of: Identifier.t] label
         ; Sexp.List [ Sexp.Atom "frame-shape"; Index.sexp_of_shapeElement frameShape ]
         ; Sexp.List
             ([ Sexp.Atom "map"; Sexp.List (List.map mapArgs ~f:sexp_of_mapArg) ]

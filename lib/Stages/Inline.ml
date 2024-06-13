@@ -1247,7 +1247,9 @@ module Stage (SB : Source.BuilderT) = struct
   let run input =
     CompilerPipeline.S.makeF ~f:(fun state ->
       match CompilerState.run (inline input) state with
-      | MOk _ as expr -> expr
+      | MOk _ as expr ->
+        Stdio.prerr_endline "Inline and monomorphise done";
+        expr
       | Errors errs ->
         Errors (NeList.map errs ~f:(fun err -> Source.{ elem = err; source = None })))
   ;;

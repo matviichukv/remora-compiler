@@ -842,6 +842,7 @@ let rec allocRequest
         ; mapBodyMatcher
         ; mapResults
         ; consumer
+        ; indexMode = _
         ; type'
         } ->
     let type' = canonicalizeTupleType type' in
@@ -932,9 +933,8 @@ let rec allocRequest
       let d = convertDimension d in
       let%bind zero = allocRequest ~mallocLoc ~writeToAddr:None zero >>| getExpr
       and body =
-        allocRequest ~mallocLoc:innerMallocLoc ~writeToAddr:None body
-        >>| getExpr
-        |> declareAllUsedAllocs
+        allocRequest ~mallocLoc:innerMallocLoc ~writeToAddr:None body >>| getExpr
+        (*|> declareAllUsedAllocs*)
       in
       return
         Expr.

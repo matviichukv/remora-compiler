@@ -13,7 +13,7 @@ let maxThreads device = device.maxThreadsPerMultiprocessor * device.multiprocess
 let grid_m10_8q =
   { maxThreadsPerBlock = 1024
   ; maxRegistersPerBlock = 65536
-  ; maxThreadsPerMultiprocessor = 2048
+  ; maxThreadsPerMultiprocessor = 65530 (* a little under, experimenting right now *)
   ; multiprocessors = 5
   ; globalMemoryBytes = 8589934592
   }

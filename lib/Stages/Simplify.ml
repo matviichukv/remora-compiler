@@ -71,7 +71,8 @@ end
    while (+ 7 x) is computational *)
 let rec nonComputational : Expr.t -> bool = function
   | Ref _ -> true
-  | Frame _ -> false
+  | Frame { elements; dimension = _; type' = _ } ->
+    List.for_all elements ~f:nonComputational
   | BoxValue { box; type' = _ } -> nonComputational box
   | IndexLet _ -> false
   | ReifyIndex _ -> false
@@ -130,6 +131,7 @@ let getCounts =
       Counts.merge (bodyCounts :: argCounts)
     | LoopBlock
         { frameShape
+        ; label = _
         ; mapArgs
         ; mapIotas = _
         ; mapBody
@@ -250,6 +252,7 @@ let rec substituteExpr subVar subValue : Expr.t -> Expr.t option =
     Let { args; body; type' }
   | LoopBlock
       { frameShape
+      ; label
       ; mapArgs
       ; mapIotas
       ; mapBody
@@ -302,6 +305,7 @@ let rec substituteExpr subVar subValue : Expr.t -> Expr.t option =
     in
     LoopBlock
       { frameShape
+      ; label
       ; mapArgs
       ; mapIotas
       ; mapBody
@@ -398,7 +402,7 @@ let constantFold (op : Expr.scalarOp) (args : Expr.t list) (type' : Type.t) : Ex
 ;;
 
 (* Perform the following optimizations:
-   - Copy propogation
+   - Copy propagation
    - Delete unused variables
    - Inline variables only used once
    - Inline variables with constant value
@@ -410,9 +414,10 @@ let rec optimize : Expr.t -> Expr.t =
   | Frame { elements; dimension; type' } ->
     let elements = List.map elements ~f:optimize in
     Frame { elements; dimension; type' }
+  | BoxValue { box = Box { indices = []; body; bodyType = _; type' = _ }; type' = _ } ->
+    body
   | BoxValue { box; type' } ->
     let box = optimize box in
-    (* TODO: if box is just a box, immediately unbox *)
     (* We would need to also change every unbox op for this value -> web? *)
     BoxValue { box; type' }
   | IndexLet { indexArgs; body; type' } ->
@@ -526,6 +531,7 @@ let rec optimize : Expr.t -> Expr.t =
      | args -> Let { args; body; type' })
   | LoopBlock
       { frameShape
+      ; label
       ; mapArgs
       ; mapIotas
       ; mapBody
@@ -567,6 +573,7 @@ let rec optimize : Expr.t -> Expr.t =
     in
     LoopBlock
       { frameShape
+      ; label
       ; mapArgs
       ; mapIotas
       ; mapBody
@@ -734,6 +741,7 @@ let rec hoistDeclarations : Expr.t -> Expr.t * hoisting list = function
     body, argHoistings @ argsAsHoistings @ bodyHoistings
   | LoopBlock
       { frameShape
+      ; label
       ; mapArgs
       ; mapIotas
       ; mapBody
@@ -797,6 +805,7 @@ let rec hoistDeclarations : Expr.t -> Expr.t * hoisting list = function
     in
     ( LoopBlock
         { frameShape
+        ; label
         ; mapArgs
         ; mapIotas
         ; mapBody
@@ -954,6 +963,7 @@ let rec hoistExpressions loopBarrier (expr : Expr.t)
       Expr.Let { args; body; type' }, argHoistings @ bodyHoistings
     | LoopBlock
         { frameShape
+        ; label
         ; mapArgs
         ; mapIotas
         ; mapBody
@@ -1022,6 +1032,7 @@ let rec hoistExpressions loopBarrier (expr : Expr.t)
       in
       ( Expr.LoopBlock
           { frameShape
+          ; label
           ; mapArgs
           ; mapIotas
           ; mapBody
@@ -1104,24 +1115,31 @@ let simplify expr =
     (* let optimized = optimize expr in *)
     (* Stdio.print_endline *)
     (*   (Printf.sprintf *)
-    (*      "Before tuple elimination:\n%s" *)
+    (*      "Before optimization:\n%s" *)
     (*      (Sexp.to_string_hum (Expr.sexp_of_t (optimize expr)))); *)
     (* let%bind { res = tupleReduced; droppedAny } = TupleReduce.reduceTuples optimized in *)
     (* if not droppedAny then return optimized else loop tupleReduced *)
     let optimized1 = optimize expr in
     (* Stdio.print_endline *)
-    (*   (Printf.sprintf "Optimized1 :\n%s" (Sexp.to_string_hum (Expr.sexp_of_t optimized1))); *)
+    (* (Printf.sprintf "Optimized1 :\n%s" (Sexp.to_string_hum (Expr.sexp_of_t optimized1))); *)
     (* Hoist variables that can be hoisted *)
     let decHoisted, hoistings = hoistDeclarationsInBody optimized1 ~bindings:All in
     assert (List.length hoistings = 0);
+    (* Stdio.print_endline *)
+    (* (Printf.sprintf *)
+    (* "Dec Hoisted :\n%s" *)
+    (* (Sexp.to_string_hum (Expr.sexp_of_t decHoisted))); *)
     (* Perform standard optimizations *)
-    let optimized2 = optimize decHoisted in
+    (* let optimized2 = optimize decHoisted in *)
     (* Re-hoist and re-optimize if anything changed *)
-    if Expr.equal decHoisted optimized2
+    let hasChanged =
+      (not (Expr.equal decHoisted optimized1)) || not (Expr.equal expr optimized1)
+    in
+    if hasChanged
     then (
       (* Hoist expressions that can be hoisted *)
       let%bind exprHoistedWithoutDecs, hoistings =
-        hoistExpressionsInBody All optimized2 ~bindings:All |> HoistState.toSimplifyState
+        hoistExpressionsInBody All decHoisted ~bindings:All |> HoistState.toSimplifyState
       in
       let exprHoisted =
         match hoistings with
@@ -1132,18 +1150,27 @@ let simplify expr =
             ~body:exprHoistedWithoutDecs
       in
       (* Stdio.print_endline *)
-      (*   (Printf.sprintf *)
-      (*      "Before tuple elimination 2:\n%s" *)
-      (*      (Sexp.to_string_hum (Expr.sexp_of_t exprHoisted))); *)
+      (* (Printf.sprintf *)
+      (* "Before tuple elimination:\n%s" *)
+      (* (Sexp.to_string_hum (Expr.sexp_of_t exprHoisted))); *)
       (* return exprHoisted *)
       (* Reduce tuples (remove unused elements) *)
-      (* let%bind { res = reduced; droppedAny } = TupleReduce.reduceTuples exprHoisted in *)
-      (* (\* If reducing tuples did anything, loop. Otherwise, return *\) *)
-      (* if droppedAny then loop reduced else return exprHoisted *)
-      return exprHoisted)
-    else loop optimized2
+      let%bind { res = reduced; droppedAny } = TupleReduce.reduceTuples exprHoisted in
+      (* Stdio.print_endline *)
+      (* (Printf.sprintf *)
+      (* "After tuple elimination:\n%s" *)
+      (* (Sexp.to_string_hum (Expr.sexp_of_t reduced))); *)
+      (* If reducing tuples did anything, loop. Otherwise, return *)
+      (* return exprHoisted *)
+      if droppedAny then loop reduced else return exprHoisted)
+    else loop optimized1
   in
   loop expr
+;;
+
+let localSimplify expr : (CompilerState.state, Nested.t, _) State.t =
+  let open State.Let_syntax in
+  return @@ optimize expr
 ;;
 
 module Stage (SB : Source.BuilderT) = struct
