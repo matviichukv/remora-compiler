@@ -87,13 +87,16 @@ module ParallelizationStructureCUDA = struct
     | Branches of indexModeTree list
   [@@deriving sexp_of, equal]
 
-  let default = { availableThreads = Some 1024; availableBlocks = Some 131072 }
+  let default = { availableThreads = Some 1024; availableBlocks = Some 65536 }
+
+  (* Size of wapr, we don't want to allocate any extra beyond this *)
+  let minimumThreads = 32
 
   (* Minimum number of threads we want to spawn to make this worthwhile *)
-  let minimumTotalThreads = 8192
+  let minimumTotalThreads = 1024
 
   (* TODO: some arbitrary maximum after which it's useless to try to load more work onto gpu *)
-  let maximumTotalThreads = 131072
+  let maximumTotalThreads = 1024 * 1024 * 8
 
   (* we don't want to do more iteration things than this because it might be better to run
      kernel multiple times at that point *)
@@ -120,10 +123,6 @@ module ParallelizationStructureCUDA = struct
     | Some _, None ->
       raise (Unreachable.Error "Should not have threads without any threads")
     | None, Some availableBlocks ->
-      (*very arbitrary 16, not sure if any good*)
-      (* if availableBlocks <= 16
-      then { availableThreads = None; availableBlocks = None }
-      else *)
       { availableThreads = None; availableBlocks = Some availableBlocks }
     | Some availableThreads, Some availableBlocks ->
       { availableThreads = Some availableThreads; availableBlocks = Some availableBlocks }
@@ -201,7 +200,9 @@ module ParallelizationStructureCUDA = struct
         (* we always use threads before blocks, so if we have threads we have blocks *)
         (match frameShape with
          | Static size ->
-           if availableThreads < size
+           if size < minimumThreads
+           then None
+           else if availableThreads < size
            then (
              (* TODO: check on the neededBlocks, because we might want to have
                 fewer blocks that loop instead of having a lot of blocks *)
@@ -263,8 +264,33 @@ module ParallelizationStructureCUDA = struct
     let index =
       match mapAlloc, consumerAlloc with
       | None, None -> None
-      | Some i, None | None, Some i -> Some i
-      | Some i1, Some i2 -> Some (mergeIndexModes i1 i2)
+      | Some i, None ->
+        (match lb.consumer with
+         | None ->
+           Some i
+           (* we could not parallelize consumer so we cannot do any parallel things here *)
+         | Some _ -> None)
+      | None, Some i -> Some i
+      | ( Some
+            { allocatedThreads = allocatedThreadsMap
+            ; allocatedBlocks = allocatedBlocksMap
+            }
+        , Some
+            { allocatedThreads = allocatedThreadsConsumer
+            ; allocatedBlocks = allocatedBlocksConsumer
+            } ) ->
+        (* minimize the threads and maximize the blocks? *)
+        let allocatedThreads =
+          match allocatedThreadsMap, allocatedThreadsConsumer with
+          | None, None | Some _, None | None, Some _ -> None
+          | Some t1, Some t2 -> Some (min t1 t2)
+        in
+        let allocatedBlocks =
+          match allocatedBlocksMap, allocatedBlocksConsumer with
+          | None, None | Some _, None | None, Some _ -> None
+          | Some t1, Some t2 -> Some (max t1 t2)
+        in
+        Some { allocatedThreads; allocatedBlocks }
     in
     index
   ;;
@@ -404,6 +430,8 @@ module ParallelizationStructureCUDA = struct
     =
     let a_iteration_total = calcIterationSpace a in
     let b_iteration_total = calcIterationSpace b in
+    (* Stdio.print_endline (Printf.sprintf "A iter total: %d" a_iteration_total); *)
+    (* Stdio.print_endline (Printf.sprintf "B iter total: %d" b_iteration_total); *)
     let a_strictly_better =
       a_iteration_total > b_iteration_total && a_iteration_total <= maximumTotalThreads
     in

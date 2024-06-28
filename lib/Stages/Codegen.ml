@@ -308,12 +308,156 @@ module GenState = struct
   let comment comment = write @@ C.Comment comment
 end
 
+(* let rec deviceToHostExpr (expr : (device, _) Acorn.Expr.t) : (host, _) Acorn.Expr.t = *)
+(*   match expr with *)
+(*   | Ref ref -> Ref ref *)
+(*   | LoopBlock *)
+(*       { frameShape *)
+(*       ; indexMode = _ *)
+(*       ; mapArgs *)
+(*       ; mapMemArgs *)
+(*       ; mapIotas *)
+(*       ; mapBody *)
+(*       ; mapBodyMatcher *)
+(*       ; mapResults *)
+(*       ; mapResultMemFinal *)
+(*       ; consumer *)
+(*       ; type' *)
+(*       } -> *)
+(*     LoopBlock *)
+(*       { frameShape *)
+(*       ; indexMode = None *)
+(*       ; mapArgs *)
+(*       ; mapMemArgs *)
+(*       ; mapIotas *)
+(*       ; mapBody = deviceToHostExpr mapBody *)
+(*       ; mapBodyMatcher *)
+(*       ; mapResults *)
+(*       ; mapResultMemFinal *)
+(*       ; consumer = Maybe.map consumer ~f:deviceToHostConsumer *)
+(*       ; type' *)
+(*       } *)
+(*   | BoxValue { box; type' } -> BoxValue { box = deviceToHostExpr box; type' } *)
+(*   | IndexLet { indexArgs; body; type' } -> *)
+(*     let body = deviceToHostExpr body in *)
+(*     let indexArgs = *)
+(*       List.map *)
+(*         indexArgs *)
+(*         ~f:(fun { indexBinding; indexValue; sort } : (host, _) Acorn.Expr.indexArg -> *)
+(*           let indexValue : (host, _) Acorn.Expr.indexValue = *)
+(*             match indexValue with *)
+(*             | Runtime r -> Runtime (deviceToHostExpr r) *)
+(*             | FromBox { box; i } -> FromBox { box = deviceToHostExpr box; i } *)
+(*           in *)
+(*           { indexBinding; indexValue; sort }) *)
+(*     in *)
+(*     IndexLet { body; indexArgs; type' } *)
+(*   | MallocLet { memArgs; body } -> *)
+(*     let body = deviceToHostExpr body in *)
+(*     MallocLet { body; memArgs } *)
+(*   | ReifyDimensionIndex r -> ReifyDimensionIndex r *)
+(*   | ShapeProd shape -> ShapeProd shape *)
+(*   | Let { args; body } -> *)
+(*     let body = deviceToHostExpr body in *)
+(*     let args = *)
+(*       List.map args ~f:(fun { binding; value } : (host, _) Acorn.Expr.letArg -> *)
+(*         { binding; value = deviceToHostExpr value }) *)
+(*     in *)
+(*     Let { body; args } *)
+(*   | Box { indices; body; type' } -> *)
+(*     let body = deviceToHostExpr body in *)
+(*     let indices = *)
+(*       List.map indices ~f:(fun { expr; index } : (host, _) Acorn.Expr.boxIndex -> *)
+(*         { expr = deviceToHostExpr expr; index }) *)
+(*     in *)
+(*     Box { indices; body; type' } *)
+(*   | Literal l -> Literal l *)
+(*   | Values { elements; type' } -> *)
+(*     let elements = List.map elements ~f:deviceToHostExpr in *)
+(*     Values { elements; type' } *)
+(*   | ScalarPrimitive { op; args; type' } -> *)
+(*     let args = List.map args ~f:deviceToHostExpr in *)
+(*     ScalarPrimitive { op; args; type' } *)
+(*   | TupleDeref { tuple; index; type' } -> *)
+(*     let tuple = deviceToHostExpr tuple in *)
+(*     TupleDeref { tuple; index; type' } *)
+(*   | ContiguousSubArray { arrayArg; indexArg; originalShape; resultShape; type' } -> *)
+(*     let arrayArg = deviceToHostExpr arrayArg in *)
+(*     let indexArg = deviceToHostExpr indexArg in *)
+(*     ContiguousSubArray { arrayArg; indexArg; originalShape; resultShape; type' } *)
+(*   | Eseq { statement; expr; type' } -> *)
+(*     let statement = deviceToHostStmt statement in *)
+(*     let expr = deviceToHostExpr expr in *)
+(*     Eseq { statement; expr; type' } *)
+(*   | Getmem m -> Getmem m *)
+
+(* and deviceToHostStmt (stmt : (device, _) Acorn.Expr.statement) *)
+(*   : (host, _) Acorn.Expr.statement *)
+(*   = *)
+(*   match stmt with *)
+(*   | Putmem { expr; addr; type' } -> *)
+(*     let expr = deviceToHostExpr expr in *)
+(*     Putmem { expr; addr; type' } *)
+(*   | ComputeForSideEffects t -> ComputeForSideEffects (deviceToHostExpr t) *)
+(*   | Statements stmts -> Statements (List.map stmts ~f:deviceToHostStmt) *)
+(*   | SLet { args; body } -> *)
+(*     let args : (host, _) Acorn.Expr.letArg list = *)
+(*       List.map args ~f:(fun { binding; value } -> *)
+(*         Acorn.Expr.{ binding; value = deviceToHostExpr value }) *)
+(*     in *)
+(*     let body = deviceToHostStmt body in *)
+(*     SLet { args; body } *)
+(*   | SMallocLet { memArgs; body } -> *)
+(*     let body = deviceToHostStmt body in *)
+(*     SMallocLet { memArgs; body } *)
+(*   | ReifyShapeIndex index -> ReifyShapeIndex index *)
+
+(* and deviceToHostConsumer *)
+(*   : type p. *)
+(*     (device, device, p, _) Acorn.Expr.consumerOp *)
+(*     -> (host, host, p, _) Acorn.Expr.consumerOp *)
+(*   = function *)
+(*   | Expr.ReduceSeq { arg; zero; body; indexMode = _; d; type' } -> *)
+(*     let zero = deviceToHostExpr zero in *)
+(*     let body = deviceToHostExpr body in *)
+(*     ReduceSeq { arg; zero; body; indexMode = None; d; type' } *)
+(*   | Expr.ReducePar _ -> raise Unimplemented.default *)
+(*   | Expr.ScanSeq { arg; zero; body; indexMode = _; d; scanResultMemFinal; type' } -> *)
+(*     let zero = deviceToHostExpr zero in *)
+(*     let body = deviceToHostExpr body in *)
+(*     ScanSeq { arg; zero; body; indexMode = None; d; scanResultMemFinal; type' } *)
+(*   | Expr.ScanPar _ -> raise Unimplemented.default *)
+(*   | Expr.Scatter { valuesArg; indicesArg; dIn; dOut; memInterim; memFinal; type' } -> *)
+(*     Scatter { valuesArg; indicesArg; dIn; dOut; memInterim; memFinal; type' } *)
+(*   | Expr.Fold *)
+(*       { zeroArg = { zeroBinding; zeroValue } *)
+(*       ; arrayArgs *)
+(*       ; mappedMemArgs *)
+(*       ; reverse *)
+(*       ; body *)
+(*       ; d *)
+(*       ; character *)
+(*       ; type' *)
+(*       } -> *)
+(*     let zeroValue = deviceToHostExpr zeroValue in *)
+(*     let zeroArg = Acorn.Expr.{ zeroBinding; zeroValue } in *)
+(*     let body = deviceToHostExpr body in *)
+(*     let character : host Acorn.Expr.foldCharacter = *)
+(*       match character with *)
+(*       | Expr.Fold -> Fold *)
+(*       | Expr.Trace m -> Trace m *)
+(*     in *)
+(*     Fold { zeroArg; arrayArgs; mappedMemArgs; reverse; body; d; character; type' } *)
+(* ;; *)
+
 let tupleFieldName i = C.Name.StrName [%string "_%{i#Int}"]
 let boxValueFieldName = C.Name.StrName "value"
 let sliceDimCountFieldName = C.Name.StrName "dimCount"
 let sliceDimsFieldName = C.Name.StrName "dims"
 let blockIndex = Cx.(refStr "blockIdx" %. StrName "x")
 let threadIndex = Cx.(refStr "threadIdx" %. StrName "x")
+let blockDim = Cx.(refStr "blockDim" %. StrName "x")
+let gridDim = Cx.(refStr "gridDim" %. StrName "x")
 
 let genTypeForSort sort =
   match sort with
@@ -543,6 +687,87 @@ let genMalloc
   in
   let%bind mem = mallocType type' in
   if store then GenState.storeExpr ~name:"mem" mem else return mem
+;;
+
+let rec getInnerAllocatedBlocks : type c d. (d, c) Acorn.Expr.t -> int = function
+  | LoopBlock lb ->
+    let mapBodyInner = getInnerAllocatedBlocks lb.mapBody in
+    (match lb.indexMode with
+     | None -> mapBodyInner
+     | Some indexMode ->
+       (match indexMode.allocatedBlocks with
+        | None -> mapBodyInner
+        | Some allocatedBlocks -> mapBodyInner * allocatedBlocks))
+  | Ref _ -> 1
+  | BoxValue { box; type' = _ } -> getInnerAllocatedBlocks box
+  | IndexLet { indexArgs; body; type' = _ } ->
+    let argsRes =
+      indexArgs
+      |> List.map ~f:(fun { indexBinding = _; indexValue; sort = _ } ->
+        match indexValue with
+        | Runtime v -> getInnerAllocatedBlocks v
+        | FromBox { box; i = _ } -> getInnerAllocatedBlocks box)
+      |> List.reduce ~f:Int.max
+      |> Option.value ~default:1
+    in
+    let bodyRes = getInnerAllocatedBlocks body in
+    Int.max argsRes bodyRes
+  | MallocLet { memArgs = _; body } -> getInnerAllocatedBlocks body
+  | ReifyDimensionIndex _ -> 1
+  | ShapeProd _ -> 1
+  | LoopKernel { kernel = _; captures = _; blocks; threads } -> blocks * threads
+  | Let { args; body } ->
+    let bodyRes = getInnerAllocatedBlocks body in
+    let argsRes =
+      args
+      |> List.map ~f:(fun { binding = _; value } -> getInnerAllocatedBlocks value)
+      |> List.reduce ~f:Int.max
+      |> Option.value ~default:1
+    in
+    Int.max bodyRes argsRes
+  | Box { indices = _; type' = _; body } -> getInnerAllocatedBlocks body
+  | Literal _ -> 1
+  | Values { elements; type' = _ } ->
+    elements
+    |> List.map ~f:(fun e -> getInnerAllocatedBlocks e)
+    |> List.reduce ~f:Int.max
+    |> Option.value ~default:1
+  | ScalarPrimitive { op = _; args; type' = _ } ->
+    args
+    |> List.map ~f:getInnerAllocatedBlocks
+    |> List.reduce ~f:Int.max
+    |> Option.value ~default:1
+  | TupleDeref { tuple; index = _; type' = _ } -> getInnerAllocatedBlocks tuple
+  | ContiguousSubArray
+      { arrayArg; indexArg; originalShape = _; resultShape = _; type' = _ } ->
+    Int.max (getInnerAllocatedBlocks arrayArg) (getInnerAllocatedBlocks indexArg)
+  | IfParallelismHitsCutoff _ -> 1
+  | Eseq { statement; expr; type' = _ } ->
+    Int.max (getInnerAllocatedBlocks expr) (getInnerAllocatedBlocksStmt statement)
+  | Getmem _ -> 1
+
+and getInnerAllocatedBlocksStmt : type c d. (d, c) Acorn.Expr.statement -> int = function
+  | Putmem _ -> 1
+  | MapKernel { kernel = _; captures = _; blocks; threads } -> blocks * threads
+  | ComputeForSideEffects e -> getInnerAllocatedBlocks e
+  | Statements stmts ->
+    let res =
+      stmts |> List.map ~f:getInnerAllocatedBlocksStmt |> List.reduce ~f:Int.max
+    in
+    (match res with
+     | None -> 1
+     | Some m -> m)
+  | SLet { args; body } ->
+    let argsRes =
+      args
+      |> List.map ~f:(fun { binding = _; value } -> getInnerAllocatedBlocks value)
+      |> List.reduce ~f:Int.max
+      |> Option.value ~default:1
+    in
+    let bodyRes = getInnerAllocatedBlocksStmt body in
+    Int.max bodyRes argsRes
+  | SMallocLet { memArgs = _; body } -> getInnerAllocatedBlocksStmt body
+  | ReifyShapeIndex _ -> 1
 ;;
 
 let rec genMem : store:bool -> Mem.t -> (C.expr, _) GenState.u =
@@ -961,7 +1186,8 @@ let rec genStmnt
       , { arg = hostExpr; param = { name = deviceVar; type' } } )
     in
     let rec annotateMapKernel
-      Expr.{ frameShape; mapArgs; mapMemArgs; mapIotas; mapBody; type' = _ }
+      Expr.
+        { frameShape; mapArgs; mapMemArgs; mapIotas; mapBody; indexMode = _; type' = _ }
       =
       let%bind frameShapeSize, frameShapeSizePass =
         genShapeElementSize frameShape
@@ -1000,7 +1226,8 @@ let rec genStmnt
     let kernelPasses = capturePasses @ mapKernelPasses in
     let rec genMapBody
       chunkVar
-      Map.{ frameShapeSize; mapArgs; mapMemArgs; mapIotas; mapBody; bodySize = _ }
+      totalIterSpace
+      Map.{ frameShapeSize = _; mapArgs; mapMemArgs; mapIotas; mapBody; bodySize = _ }
       =
       let%bind loopVar =
         match mapBody with
@@ -1009,14 +1236,14 @@ let rec genStmnt
           GenState.storeExpr ~name:"i" @@ Cx.(chunkVar / maxBodySize.device)
       in
       GenState.writeIte
-        ~cond:Cx.(loopVar < frameShapeSize.device)
+        ~cond:Cx.(loopVar < intLit totalIterSpace)
         ~thenBranch:
           (let%bind () = genMapBodySetup ~loopVar ~mapArgs ~mapIotas ~mapMemArgs in
            match mapBody with
            | Statement statement -> genStmnt ~hostOrDevice:Device statement
            | SubMaps { subMaps; maxBodySize } ->
              subMaps
-             |> List.map ~f:(genMapBody Cx.(chunkVar % maxBodySize.device))
+             |> List.map ~f:(genMapBody Cx.(chunkVar % maxBodySize.device) totalIterSpace)
              |> GenState.all_unit)
         ~elseBranch:(return ())
     in
@@ -1027,14 +1254,34 @@ let rec genStmnt
           let%bind body =
             GenState.block
             @@
+            let%bind innerBlocks =
+              GenState.createVarAuto
+                "innerBlocks"
+                Cx.(intLit blocks / annotatedMapKernel.frameShapeSize.device)
+            in
+            let indexMode = Option.value_exn kernel.map.indexMode in
+            let loopVarInitValue =
+              match indexMode.allocatedThreads with
+              | None ->
+                (* do the block thing *)
+                Cx.(blockIndex / innerBlocks)
+              | Some _ ->
+                (* use threads with some help from blocks *)
+                Cx.((blockIndex * intLit blocks) + threadIndex)
+            in
             let%bind () =
               GenState.writeForLoop
                 ~loopVar:"i"
                 ~loopVarType:Int64
-                ~initialValue:Cx.((blockIndex * intLit threads) + threadIndex)
-                ~cond:(fun loopVar -> Cx.(loopVar < annotatedMapKernel.bodySize.device))
+                ~initialValue:loopVarInitValue
+                  (* ~initialValue:Cx.(blockIndex / innerBlocks * innerBlocks * intLit threads) *)
+                  (* ~initialValue:Cx.((blockIndex * intLit threads) + threadIndex) *)
+                ~cond:(fun loopVar ->
+                  Cx.(loopVar < intLit threads * intLit blocks)
+                  (* Cx.(loopVar < annotatedMapKernel.bodySize.device) *))
                 ~loopVarUpdate:(Increment (Cx.intLit @@ (blocks * threads)))
-                ~body:(fun loopVar -> genMapBody loopVar annotatedMapKernel)
+                ~body:(fun loopVar ->
+                  genMapBody loopVar (blocks * threads) annotatedMapKernel)
             in
             return ()
           in
@@ -1256,6 +1503,7 @@ and genExpr
   | ( _
     , LoopBlock
         { frameShape
+        ; indexMode = None
         ; mapArgs
         ; mapMemArgs
         ; mapIotas
@@ -1313,7 +1561,8 @@ and genExpr
       | Nothing ->
         let%bind unitType = genType @@ Tuple [] in
         return @@ (return (), Cx.initStruct unitType [], false)
-      | Just (ReduceSeq { arg; zero; body; d = _; type' = _ }) ->
+        (* fine to ignore indexMode since it has to be None for Reduce to be seq *)
+      | Just (ReduceSeq { arg; zero; body; d = _; indexMode = _; type' = _ }) ->
         let accVar = C.Name.UniqueName arg.firstBinding in
         let stepVar = C.Name.UniqueName arg.secondBinding in
         let%bind accType = genType @@ Expr.type' body in
@@ -1331,7 +1580,10 @@ and genExpr
           GenState.write Cx.(VarRef accVar := body)
         in
         return @@ (inLoop, C.VarRef accVar, false)
-      | Just (ScanSeq { arg; zero; body; d = _; scanResultMemFinal; type' = _ }) ->
+        (* same as above *)
+      | Just
+          (ScanSeq
+            { arg; zero; body; d = _; scanResultMemFinal; indexMode = _; type' = _ }) ->
         let accVar = C.Name.UniqueName arg.firstBinding in
         let stepVar = C.Name.UniqueName arg.secondBinding in
         let%bind accType = genType @@ Expr.type' body in
@@ -1363,6 +1615,14 @@ and genExpr
             ~type':(Expr.type' body)
         in
         return @@ (inLoop, cMem, false)
+      | Just (ReducePar _) ->
+        raise
+          (Unreachable.Error
+             "Trying to do parallel reduce without index mode, something went wrong")
+      | Just (ScanPar _) ->
+        raise
+          (Unreachable.Error
+             "Trying to do parallel scan without index mode, something went wrong")
       | Just
           (Fold
             { arrayArgs
@@ -1544,10 +1804,261 @@ and genExpr
     let%bind type' = genType @@ Tuple type' in
     return @@ Cx.initStruct type' [ mapResult; consumerResult ]
   | ( Host
+    , LoopBlock
+        { frameShape = _
+        ; indexMode = Some _
+        ; mapArgs = _
+        ; mapMemArgs = _
+        ; mapIotas = _
+        ; mapBody = _
+        ; mapBodyMatcher = _
+        ; mapResults = _
+        ; mapResultMemFinal = _
+        ; consumer = _
+        ; type' = _
+        } ) ->
+    raise (Unimplemented.Error "Parallelization on the host is not currently supported")
+  | ( Device
+    , LoopBlock
+        { frameShape = _
+        ; indexMode = Some { allocatedThreads; allocatedBlocks }
+        ; mapArgs
+        ; mapMemArgs
+        ; mapIotas
+        ; mapBody
+        ; mapBodyMatcher
+        ; mapResults (* mapResultMemInterim = mapResultMemFinal for LoopBlock *)
+        ; mapResultMemFinal = mapResultMem
+        ; consumer
+        ; type'
+        } ) ->
+    (* Invariants (things we know): *)
+    (* 1. We have enough allocated blocks/threads to cover what we need *)
+    (*    - this means we don't need a loop here *)
+    (* 2. Threads are only allocated once, so we can just use them (plus block indexing things) *)
+    (* 3. If we have allocated threads, that means we are the inner-most par loop *)
+    (* 4. If we have not allocated threads, it means this is one of the middle loops *)
+    (* 5. (Will change with next rewrite) *)
+    (*    At this time, only full-map kernels are going to be multilayer parallelized *)
+    (*    So we are going to ignore all consumers except scatter for the time being *)
+    (* let%bind steps = genShapeElementSize frameShape |> GenState.storeExpr ~name:"steps" in *)
+    let%bind mapArgsWithDerefers =
+      mapArgs
+      |> List.map ~f:(fun arg ->
+        let%bind argRef = genExpr ~hostOrDevice ~store:true @@ Ref arg.ref in
+        let%bind derefer = genArrayDeref ~arrayType:arg.ref.type' ~isMem:false argRef in
+        return @@ (arg, derefer))
+      |> GenState.all
+    in
+    let%bind mapMemArgsWithDerefers =
+      mapMemArgs
+      |> List.map ~f:(fun arg ->
+        let%bind argRef = genMem ~store:true arg.mem in
+        let%bind derefer =
+          genArrayDeref ~arrayType:(Mem.type' arg.mem) ~isMem:true argRef
+        in
+        return @@ (arg, derefer))
+      |> GenState.all
+    in
+    let%bind cMapResultMem = genMem ~store:true mapResultMem in
+    let mapResultTypes =
+      match type' with
+      | [ Tuple mapResultTypes; _ ] -> mapResultTypes
+      | _ ->
+        raise
+        @@ Unreachable.Error "expected 2 element tuple where first element is a tuple"
+    in
+    let%bind mapResultDerefersAndTypes =
+      mapResultTypes
+      |> List.mapi ~f:(fun i resultTypeArr ->
+        let%bind derefer =
+          genArrayDeref
+            ~arrayType:resultTypeArr
+            ~isMem:true
+            Cx.(cMapResultMem %. tupleFieldName i)
+        in
+        return @@ (derefer, guillotineType resultTypeArr))
+      |> GenState.all
+    in
+    (* let%bind loopVar = *)
+    (*   GenState.createName (NameOfStr { str = "i"; needsUniquifying = true }) *)
+    (* in *)
+    let loopVarValue =
+      match allocatedThreads with
+      | None ->
+        (match allocatedBlocks with
+         | None ->
+           raise
+             (Unreachable.Error "Empty index mode that is not none, somethign went wrong")
+         | Some allocatedBlocks ->
+           let innerBlocks = getInnerAllocatedBlocks mapBody in
+           Cx.(
+             blockIndex
+             % (intLit allocatedBlocks * intLit innerBlocks)
+             / intLit innerBlocks
+             (* * (intLit innerBlocks * blockDim) *)))
+      | Some _ ->
+        (* easy case, just calculate index from here *)
+        (match allocatedBlocks with
+         | None -> threadIndex
+         | Some allocatedBlocks ->
+           Cx.((blockIndex % intLit allocatedBlocks * blockDim) + threadIndex))
+    in
+    let%bind loopVar =
+      GenState.createName (NameOfStr { str = "i"; needsUniquifying = true })
+    in
+    let%bind () =
+      GenState.write
+      @@ C.Define { name = loopVar; type' = Some Int64; value = Some loopVarValue }
+    in
+    let%bind consumerInLoop, consumerResult, _ (* loopInReverse *) =
+      match consumer with
+      | Nothing ->
+        let%bind unitType = genType @@ Tuple [] in
+        return @@ (return (), Cx.initStruct unitType [], false)
+      | Just (ReduceSeq { arg = _; zero = _; body = _; d = _; indexMode = _; type' = _ })
+        ->
+        raise
+          (Unreachable.Error
+             "Trying to do sequential reduce with index mode, something went wrong")
+      | Just
+          (ScanSeq
+            { arg = _
+            ; zero = _
+            ; body = _
+            ; d = _
+            ; scanResultMemFinal = _
+            ; indexMode = _
+            ; type' = _
+            }) ->
+        raise
+          (Unreachable.Error "Parallel scan on non-kernel level is not implemented yet")
+      | Just (ReducePar _) ->
+        raise
+          (Unimplemented.Error
+             "Parallel reduce on non-kernel level is not implemented yet ")
+      | Just (ScanPar _) ->
+        raise
+          (Unreachable.Error "Parallel reduce on non-kernel level is not implemented yet")
+      | Just
+          (Fold
+            { arrayArgs = _
+            ; zeroArg = _
+            ; mappedMemArgs = _
+            ; body = _
+            ; reverse = _
+            ; d = _
+            ; character = _
+            ; type' = _
+            }) ->
+        raise
+          (Unreachable.Error "Trying to do fold with index mode, something went wrong")
+      | Just
+          (Scatter
+            { valuesArg
+            ; indicesArg
+            ; memInterim = _
+            ; memFinal = mem
+            ; dIn = _
+            ; dOut = _
+            ; type' = _
+            }) ->
+        (* For sequential, memInterim = memFinal, so can just write directly to memFinal *)
+        let%bind cMem = genMem ~store:true mem in
+        let cValueArg = Cx.(refId valuesArg.productionId) in
+        let cIndexArg = Cx.(refId indicesArg.productionId) in
+        let%bind outputDerefer =
+          genArrayDeref ~arrayType:(Mem.type' mem) ~isMem:true cMem
+        in
+        let inLoop =
+          GenState.writeIte
+            ~cond:Cx.(cIndexArg >= intLit 0)
+            ~thenBranch:
+              (genCopyExprToMem
+                 ~mem:(outputDerefer cIndexArg)
+                 ~expr:cValueArg
+                 ~type':(guillotineType @@ Mem.type' mem))
+            ~elseBranch:(return ())
+        in
+        return @@ (inLoop, cMem, false)
+    in
+    let%bind body =
+      GenState.block
+      @@
+      let%bind () =
+        mapArgsWithDerefers
+        |> List.map ~f:(fun (arg, derefer) ->
+          GenState.write
+          @@ C.Define
+               { name = UniqueName arg.binding
+               ; type' = None
+               ; value = Some (derefer (VarRef loopVar))
+               })
+        |> GenState.all_unit
+      in
+      let%bind () =
+        mapMemArgsWithDerefers
+        |> List.map ~f:(fun (arg, derefer) ->
+          GenState.write
+          @@ C.Define
+               { name = UniqueName arg.memBinding
+               ; type' = None
+               ; value = Some (derefer (VarRef loopVar))
+               })
+        |> GenState.all_unit
+      in
+      let%bind () =
+        mapIotas |> List.map ~f:(genIota ~loopVar:(VarRef loopVar)) |> GenState.all_unit
+      in
+      let%bind mapRes = genExpr ~hostOrDevice ~store:true mapBody in
+      let%bind () = genMatchMapBody mapBodyMatcher mapRes in
+      let%bind () =
+        List.zip_exn mapResults mapResultDerefersAndTypes
+        |> List.map ~f:(fun (resultId, (resultDerefer, resultType)) ->
+          genCopyExprToMem
+            ~expr:Cx.(refId resultId)
+            ~mem:(resultDerefer @@ VarRef loopVar)
+            ~type':resultType)
+        |> GenState.all_unit
+      in
+      consumerInLoop
+    in
+    let%bind () = GenState.write @@ C.Block body in
+    (* let%bind () = *)
+    (*   GenState.write *)
+    (*   @@ *)
+    (*   if loopInReverse *)
+    (*   then *)
+    (*     C.ForLoop *)
+    (*       { loopVar *)
+    (*       ; loopVarType = Int64 *)
+    (*       ; initialValue = Cx.(steps - intLit 1) *)
+    (*       ; cond = Cx.(VarRef loopVar >= intLit 0) *)
+    (*       ; loopVarUpdate = DecrementOne *)
+    (*       ; body *)
+    (*       } *)
+    (*   else *)
+    (*     C.ForLoop *)
+    (*       { loopVar *)
+    (*       ; loopVarType = Int64 *)
+    (*       ; initialValue = Cx.(intLit 0) *)
+    (*       ; cond = Cx.(VarRef loopVar < steps) *)
+    (*       ; loopVarUpdate = IncrementOne *)
+    (*       ; body *)
+    (*       } *)
+    (* in *)
+    let%bind mapResult =
+      genExpr ~hostOrDevice ~store
+      @@ Getmem { addr = mapResultMem; type' = Mem.type' mapResultMem }
+    in
+    let%bind type' = genType @@ Tuple type' in
+    return @@ Cx.initStruct type' [ mapResult; consumerResult ]
+  | ( Host
     , LoopKernel
         { kernel =
             { loopBlock =
                 { frameShape = _
+                ; indexMode = _ (* We only do one layer loops that have a consumer *)
                 ; mapArgs
                 ; mapMemArgs
                 ; mapIotas
@@ -1694,6 +2205,7 @@ and genExpr
         { kernel =
             { loopBlock =
                 { frameShape = _
+                ; indexMode = _
                 ; mapArgs
                 ; mapMemArgs
                 ; mapIotas
@@ -1704,7 +2216,14 @@ and genExpr
                 ; consumer =
                     Just
                       (ReducePar
-                        { reduce = { arg; zero; body = reduceBody; d; type' = reduceType }
+                        { reduce =
+                            { arg
+                            ; zero
+                            ; body = reduceBody
+                            ; d
+                            ; indexMode = _
+                            ; type' = reduceType
+                            }
                         ; interimResultMemDeviceInterim = reduceResultsMemInterim
                         ; interimResultMemHostFinal = reduceResultsMemFinal
                         ; outerBody
@@ -2008,6 +2527,8 @@ and genExpr
         ~target:mapResultFinal
         ~source:cMapResultMemInterimHost
     in
+    (* TODO: check if this is right *)
+    let reduceResultsMemFinal = Option.value_exn reduceResultsMemFinal in
     (* copy the reduce result from device back to host *)
     let%bind reduceResultsFinal = genMem ~store:true reduceResultsMemFinal in
     let%bind () =
@@ -2051,6 +2572,7 @@ and genExpr
         { kernel =
             { loopBlock =
                 { frameShape = _
+                ; indexMode = _
                 ; mapArgs
                 ; mapMemArgs
                 ; mapIotas
@@ -2062,7 +2584,14 @@ and genExpr
                     Just
                       (ScanPar
                         { scan =
-                            { arg; zero; body; d; scanResultMemFinal; type' = scanType }
+                            { arg
+                            ; zero
+                            ; body
+                            ; d
+                            ; scanResultMemFinal
+                            ; indexMode = _
+                            ; type' = scanType
+                            }
                         ; scanResultMemDeviceInterim
                         })
                 ; type' = loopType

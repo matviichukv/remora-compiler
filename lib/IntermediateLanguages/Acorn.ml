@@ -318,6 +318,7 @@ module Expr = struct
   (** returns a tuple of (map results (tuple of arrays, not array of tuples), consumer result (unit if None)) *)
   and ('lOuter, 'lInner, 'p, 'c, 'e) loopBlock =
     { frameShape : Index.shapeElement
+    ; indexMode : Nested.Expr.indexMode option
     ; mapArgs : mapArg list
     ; mapMemArgs : memArg list
     ; mapIotas : Identifier.t list
@@ -330,9 +331,9 @@ module Expr = struct
     ; type' : Type.tuple
     }
 
-  and ('c, 'e) parLoopBlock =
+  and ('lOuter, 'lInner, 'c, 'e) parLoopBlock =
     { mapResultMemDeviceInterim : Mem.t
-    ; loopBlock : (host, device, parallel, 'c, 'e) loopBlock
+    ; loopBlock : ('lOuter, 'lInner, parallel, 'c, 'e) loopBlock
     }
 
   and ('l, 'c) foldZeroArg =
@@ -367,6 +368,7 @@ module Expr = struct
     { arg : reduceArg
     ; zero : ('lOuter, 'c) t
     ; body : ('lInner, 'c) t
+    ; indexMode : Nested.Expr.indexMode option
     ; d : Index.dimension
     ; type' : Type.t
     }
@@ -375,24 +377,27 @@ module Expr = struct
     { arg : reduceArg
     ; zero : ('lOuter, 'c) t
     ; body : ('lInner, 'c) t
+    ; indexMode : Nested.Expr.indexMode option
     ; d : Index.dimension
     ; scanResultMemFinal : Mem.t
     ; type' : Type.t
     }
 
-  (** Represents a reduce that happens in parallel. While most of the reduction occurs
-      on device, the last few steps occur on host. *)
-  and 'c parReduce =
-    { reduce : (host, device, 'c) reduce
+  (** Represents a reduce that happens in parallel.
+      ** If this reduce is part of a kernel, results are uploaded to ...MemHostFinal
+      ** Otherwise they are in the ...MemDeviceInterim *)
+  and ('lOuter, 'lInner, 'c) parReduce =
+    { reduce : ('lOuter, 'lInner, 'c) reduce
+        (* Where to write the results of the reduction steps that occur on device *)
     ; interimResultMemDeviceInterim : Mem.t
-    ; interimResultMemHostFinal : Mem.t
-        (** Where to write the results of the reduction steps that occur on device *)
-    ; outerBody : (host, 'c) t (** The last few steps, which occur on host *)
+    ; interimResultMemHostFinal : Mem.t option
+        (* The remained of the reduction that we want to do on CPU because it's faster *)
+    ; outerBody : ('lOuter, 'c) t
     }
 
   (** Represents a scan that happens in parallel. *)
-  and 'c parScan =
-    { scan : (host, device, 'c) scan
+  and ('lOuter, 'lInner, 'c) parScan =
+    { scan : ('lOuter, 'lInner, 'c) scan
     ; scanResultMemDeviceInterim : Mem.t
     }
 
@@ -421,11 +426,15 @@ module Expr = struct
     | ReduceSeq :
         ('lOuter, 'lInner, 'c) reduce
         -> ('lOuter, 'lInner, sequential, 'c) consumerOp
-    | ReducePar : 'c parReduce -> (host, device, parallel, 'c) consumerOp
+    | ReducePar :
+        ('lOuter, 'lInner, 'c) parReduce
+        -> ('lOuter, 'lInner, parallel, 'c) consumerOp
     | ScanSeq :
         ('lOuter, 'lInner, 'c) scan
         -> ('lOuter, 'lInner, sequential, 'c) consumerOp
-    | ScanPar : 'c parScan -> (host, device, parallel, 'c) consumerOp
+    | ScanPar :
+        ('lOuter, 'lInner, 'c) parScan
+        -> ('lOuter, 'lInner, parallel, 'c) consumerOp
     | Scatter : ('lOuter, 'lInner) scatter -> ('lOuter, 'lInner, _, _) consumerOp
     | Fold : ('lOuter, 'lInner, 'c) fold -> ('lOuter, 'lInner, sequential, 'c) consumerOp
 
@@ -435,6 +444,7 @@ module Expr = struct
 
   and 'c mapInKernel =
     { frameShape : Index.shapeElement
+    ; indexMode : Nested.Expr.indexMode option
     ; mapArgs : mapArg list
     ; mapMemArgs : memArg list
     ; mapIotas : Identifier.t list
@@ -518,8 +528,10 @@ module Expr = struct
     | MallocLet : ('l, 'c) t mallocLet -> ('l, 'c) t
     | ReifyDimensionIndex : reifyDimensionIndex -> (_, _) t
     | ShapeProd : Index.shape -> (_, _) t
-    | LoopBlock : ('l, 'l, sequential, 'c, 'e) loopBlock -> ('l, 'c) t
-    | LoopKernel : (('c, Maybe.doesExist) parLoopBlock, 'c) kernel -> (host, 'c) t
+    | LoopBlock : ('l, 'l, 'p, 'c, 'e) loopBlock -> ('l, 'c) t
+    | LoopKernel :
+        ((host, device, 'c, Maybe.doesExist) parLoopBlock, 'c) kernel
+        -> (host, 'c) t
     | Let : ('l, ('l, 'c) t, 'c) let' -> ('l, 'c) t
     | Box : ('l, 'c) box -> ('l, 'c) t
     | Literal : literal -> (_, _) t
@@ -731,9 +743,11 @@ module Expr = struct
       : type a b c.
         (a -> Sexp.t) -> (b -> Sexp.t) -> (c -> Sexp.t) -> (a, b, c) reduce -> Sexp.t
       =
-      fun sexp_of_a sexp_of_b sexp_of_c { arg; zero; body; d = _; type' = _ } ->
+      fun sexp_of_a sexp_of_b sexp_of_c { arg; zero; body; indexMode; d = _; type' = _ } ->
       Sexp.List
         [ Sexp.Atom "reduce-zero"
+        ; Sexp.List
+            [ Sexp.Atom "index-mode"; [%sexp_of: Nested.Expr.indexMode option] indexMode ]
         ; sexp_of_t sexp_of_a sexp_of_c zero
         ; Sexp.List
             [ Sexp.Atom (Identifier.show arg.firstBinding)
@@ -750,9 +764,11 @@ module Expr = struct
       fun sexp_of_a
           sexp_of_b
           sexp_of_c
-          { arg; zero; body; d = _; scanResultMemFinal; type' = _ } ->
+          { arg; zero; body; indexMode; d = _; scanResultMemFinal; type' = _ } ->
       Sexp.List
         [ Sexp.Atom "scan-zero"
+        ; Sexp.List
+            [ Sexp.Atom "index-mode"; [%sexp_of: Nested.Expr.indexMode option] indexMode ]
         ; sexp_of_t sexp_of_a sexp_of_c zero
         ; Sexp.List
             [ Sexp.Atom (Identifier.show arg.firstBinding)
@@ -763,26 +779,34 @@ module Expr = struct
         ; sexp_of_t sexp_of_b sexp_of_c body
         ]
 
-    and sexp_of_parReduce : type c. (c -> Sexp.t) -> c parReduce -> Sexp.t =
-      fun sexp_of_c
+    and sexp_of_parReduce
+      : type a b c.
+        (a -> Sexp.t) -> (b -> Sexp.t) -> (c -> Sexp.t) -> (a, b, c) parReduce -> Sexp.t
+      =
+      fun sexp_of_a
+          sexp_of_b
+          sexp_of_c
           { reduce; interimResultMemDeviceInterim; interimResultMemHostFinal; outerBody } ->
       Sexp.List
-        [ sexp_of_reduce sexp_of_host sexp_of_device sexp_of_c reduce
+        [ sexp_of_reduce sexp_of_a sexp_of_b sexp_of_c reduce
+        ; sexp_of_t sexp_of_a sexp_of_c outerBody
         ; Sexp.List
             [ Sexp.Atom "interim-result-mem-device-interim"
             ; Mem.sexp_of_t interimResultMemDeviceInterim
             ]
         ; Sexp.List
             [ Sexp.Atom "interim-result-mem-host-final"
-            ; Mem.sexp_of_t interimResultMemHostFinal
+            ; [%sexp_of: Mem.t option] interimResultMemHostFinal
             ]
-        ; Sexp.List [ Sexp.Atom "outer-body"; sexp_of_t sexp_of_host sexp_of_c outerBody ]
         ]
 
-    and sexp_of_parScan : type c. (c -> Sexp.t) -> c parScan -> Sexp.t =
-      fun sexp_of_c { scan; scanResultMemDeviceInterim } ->
+    and sexp_of_parScan
+      : type a b c.
+        (a -> Sexp.t) -> (b -> Sexp.t) -> (c -> Sexp.t) -> (a, b, c) parScan -> Sexp.t
+      =
+      fun sexp_of_a sexp_of_b sexp_of_c { scan; scanResultMemDeviceInterim } ->
       Sexp.List
-        [ sexp_of_scan sexp_of_host sexp_of_device sexp_of_c scan
+        [ sexp_of_scan sexp_of_a sexp_of_b sexp_of_c scan
         ; Sexp.List
             [ Sexp.Atom "scan-result-mem-device-interim"
             ; Mem.sexp_of_t scanResultMemDeviceInterim
@@ -846,16 +870,15 @@ module Expr = struct
       : type a b p c.
         (a -> Sexp.t)
         -> (b -> Sexp.t)
-        -> (p -> Sexp.t)
         -> (c -> Sexp.t)
         -> (a, b, p, c) consumerOp
         -> Sexp.t
       =
-      fun sexp_of_a sexp_of_b _ sexp_of_c -> function
+      fun sexp_of_a sexp_of_b sexp_of_c -> function
       | ReduceSeq reduce -> sexp_of_reduce sexp_of_a sexp_of_b sexp_of_c reduce
-      | ReducePar reduce -> sexp_of_parReduce sexp_of_c reduce
+      | ReducePar reduce -> sexp_of_parReduce sexp_of_a sexp_of_b sexp_of_c reduce
       | ScanSeq scan -> sexp_of_scan sexp_of_a sexp_of_b sexp_of_c scan
-      | ScanPar scan -> sexp_of_parScan sexp_of_c scan
+      | ScanPar scan -> sexp_of_parScan sexp_of_a sexp_of_b sexp_of_c scan
       | Fold fold -> sexp_of_fold sexp_of_a sexp_of_b sexp_of_c fold
       | Scatter scatter -> sexp_of_scatter sexp_of_a sexp_of_b scatter
 
@@ -867,7 +890,6 @@ module Expr = struct
       : type a b p c e x.
         (a -> Sexp.t)
         -> (b -> Sexp.t)
-        -> (p -> Sexp.t)
         -> (c -> Sexp.t)
         -> x
         -> (a, b, p, c, e) loopBlock
@@ -875,10 +897,10 @@ module Expr = struct
       =
       fun sexp_of_a
           sexp_of_b
-          sexp_of_p
           sexp_of_c
           _
           { frameShape
+          ; indexMode
           ; mapArgs
           ; mapMemArgs
           ; mapIotas
@@ -891,6 +913,8 @@ module Expr = struct
           } ->
       Sexp.List
         [ Sexp.Atom "loop"
+        ; Sexp.List
+            [ Sexp.Atom "index-mode"; [%sexp_of: Nested.Expr.indexMode option] indexMode ]
         ; Sexp.List [ Sexp.Atom "frame-shape"; Index.sexp_of_shapeElement frameShape ]
         ; Sexp.List
             ([ Sexp.Atom "map"
@@ -916,28 +940,28 @@ module Expr = struct
             [ Sexp.Atom "consumer"
             ; (match consumer with
                | Just consumer ->
-                 sexp_of_consumerOp sexp_of_a sexp_of_b sexp_of_p sexp_of_c consumer
+                 sexp_of_consumerOp sexp_of_a sexp_of_b sexp_of_c consumer
                | Nothing ->
                  sexp_of_values sexp_of_a sexp_of_c { elements = []; type' = [] })
             ]
         ]
 
     and sexp_of_parLoopBlock
-      : type c e x. (c -> Sexp.t) -> x -> (c, e) parLoopBlock -> Sexp.t
+      : type a b c e x.
+        (a -> Sexp.t)
+        -> (b -> Sexp.t)
+        -> (c -> Sexp.t)
+        -> x
+        -> (a, b, c, e) parLoopBlock
+        -> Sexp.t
       =
-      fun sexp_of_c sexp_of_x { mapResultMemDeviceInterim; loopBlock } ->
+      fun sexp_of_a sexp_of_b sexp_of_c sexp_of_x { mapResultMemDeviceInterim; loopBlock } ->
       Sexp.List
         [ Sexp.List
             [ Sexp.Atom "map-result-mem-device-interim"
             ; [%sexp_of: Mem.t] mapResultMemDeviceInterim
             ]
-        ; sexp_of_loopBlock
-            sexp_of_host
-            sexp_of_device
-            sexp_of_parallel
-            sexp_of_c
-            sexp_of_x
-            loopBlock
+        ; sexp_of_loopBlock sexp_of_a sexp_of_b sexp_of_c sexp_of_x loopBlock
         ]
 
     and sexp_of_mapBody : type c. (c -> Sexp.t) -> c mapBody -> Sexp.t =
@@ -948,9 +972,14 @@ module Expr = struct
         Sexp.List (List.map subMaps ~f:(sexp_of_mapInKernel sexp_of_c))
 
     and sexp_of_mapInKernel : type c. (c -> Sexp.t) -> c mapInKernel -> Sexp.t =
-      fun sexp_of_c { frameShape; mapArgs; mapMemArgs; mapIotas; mapBody; type' = _ } ->
+      fun sexp_of_c
+          { frameShape; indexMode; mapArgs; mapMemArgs; mapIotas; mapBody; type' = _ } ->
       Sexp.List
         ([ Sexp.Atom "map-kernel"
+         ; Sexp.List
+             [ Sexp.Atom "index-mode"
+             ; [%sexp_of: Nested.Expr.indexMode option] indexMode
+             ]
          ; Sexp.List [ Sexp.Atom "frame-shape"; Index.sexp_of_shapeElement frameShape ]
          ; Sexp.List
              (List.map mapArgs ~f:sexp_of_mapArg @ List.map mapMemArgs ~f:sexp_of_memArg)
@@ -1077,18 +1106,19 @@ module Expr = struct
         sexp_of_loopBlock
           sexp_of_a
           sexp_of_a
-          sexp_of_sequential
           sexp_of_c
           (function
-           | Some consumer ->
-             sexp_of_consumerOp sexp_of_a sexp_of_a sexp_of_sequential sexp_of_c consumer
+           | Some consumer -> sexp_of_consumerOp sexp_of_a sexp_of_a sexp_of_c consumer
            | None -> sexp_of_values sexp_of_a sexp_of_c { elements = []; type' = [] })
           loopBlock
       | LoopKernel loopKernel ->
         sexp_of_kernel
           (sexp_of_parLoopBlock
+             sexp_of_host
+             (* figure out how to correctly fill this in *)
+               (fun _ -> Sexp.Atom "Inner thing")
              sexp_of_c
-             (sexp_of_consumerOp sexp_of_host sexp_of_device sexp_of_parallel sexp_of_c))
+             (sexp_of_consumerOp sexp_of_a sexp_of_device sexp_of_c))
           sexp_of_c
           loopKernel
       | ContiguousSubArray contiguousSubArray ->

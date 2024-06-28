@@ -187,6 +187,7 @@ let rec getPossibleMemSources
       fun ~mapResultMemInterim
           Acorn.Expr.
             { frameShape = _
+            ; indexMode = _
             ; mapArgs
             ; mapMemArgs
             ; mapIotas = _
@@ -226,7 +227,8 @@ let rec getPossibleMemSources
             iter inputs)
         in
         let getPossibleMemSourcesInReduce
-          ({ arg; zero; body; d = _; type' = _ } : (_, _, _) Acorn.Expr.reduce)
+          ({ arg; zero; body; indexMode = _; d = _; type' = _ } :
+            (_, _, _) Acorn.Expr.reduce)
           =
           let%bind zeroSources = getPossibleMemSources zero in
           let initialSources = Set.union zeroSources mapSources in
@@ -238,7 +240,7 @@ let rec getPossibleMemSources
         in
         let getPossibleMemSourcesInScan
           ~scanResultMemInterim
-          ({ arg; zero; body; d = _; scanResultMemFinal; type' = _ } :
+          ({ arg; zero; body; indexMode = _; d = _; scanResultMemFinal; type' = _ } :
             (_, _, _) Acorn.Expr.scan)
           =
           let%bind zeroSources = getPossibleMemSources zero in
@@ -315,14 +317,20 @@ let rec getPossibleMemSources
             getPossibleMemSourcesInMem interimResultMemDeviceInterim
           in
           let%bind interimResultMemFinalSources =
-            getPossibleMemSourcesInMem interimResultMemHostFinal
+            match interimResultMemHostFinal with
+            | Some interimResultMemHostFinal ->
+              getPossibleMemSourcesInMem interimResultMemHostFinal
+            | None -> return (Set.empty (module Identifier))
           in
           let%bind () =
             MemSourceState.writeToMem
               ~valueSources:interimResultMemInterimSources
               ~memSources:interimResultMemFinalSources
           in
-          getPossibleMemSourcesInMem interimResultMemHostFinal
+          (match interimResultMemHostFinal with
+           | None -> return interimResultMemFinalSources
+           | Some interimResultMemHostFinal ->
+             getPossibleMemSourcesInMem interimResultMemHostFinal)
         | Just (ReduceSeq reduce) -> getPossibleMemSourcesInReduce reduce
         | Just (ScanPar { scan; scanResultMemDeviceInterim }) ->
           getPossibleMemSourcesInScan
@@ -516,7 +524,15 @@ and updateMemSourceEnvFromStatement
     | ReifyShapeIndex { shape = _; mem = _ } -> return ()
 
 and updateMemSourceEnvFromMapInKernel
-  Acorn.Expr.{ frameShape = _; mapArgs; mapMemArgs; mapIotas = _; mapBody; type' = _ }
+  Acorn.Expr.
+    { frameShape = _
+    ; indexMode = _
+    ; mapArgs
+    ; mapMemArgs
+    ; mapIotas = _
+    ; mapBody
+    ; type' = _
+    }
   =
   let open MemSourceState.Let_syntax in
   let mapArgExtensions =
@@ -819,6 +835,7 @@ let rec allocRequest
         ((l, lInner, seqOrPar, unit, exists) Expr.loopBlock
          -> Acorn.Mem.t
          -> l Expr.sansCaptures)
+      -> isKernel:bool
       -> blocks:int
       -> innerMallocLoc:Acorn.Expr.mallocLoc
       -> createMapTargetAddr:(targetAddr option -> targetAddr option)
@@ -829,6 +846,7 @@ let rec allocRequest
       -> (l allocResult, 'e) AllocAcc.t
     =
     fun ~wrapLoopBlock
+        ~isKernel
         ~blocks
         ~innerMallocLoc
         ~createMapTargetAddr
@@ -842,10 +860,11 @@ let rec allocRequest
         ; mapBodyMatcher
         ; mapResults
         ; consumer
-        ; indexMode = _
+        ; indexMode
         ; type'
         } ->
     let type' = canonicalizeTupleType type' in
+    let _ = blocks in
     let mapTargetAddr, consumerTargetAddr =
       match targetAddr with
       | None -> None, None
@@ -929,12 +948,11 @@ let rec allocRequest
         Acorn.Expr.{ memBinding; mem })
       @ mapBodyMemArgs
     in
-    let processReduce Corn.Expr.{ arg; zero; body; d; type' = reduceType } =
+    let processReduce Corn.Expr.{ arg; zero; body; indexMode; d; type' = reduceType } =
       let d = convertDimension d in
       let%bind zero = allocRequest ~mallocLoc ~writeToAddr:None zero >>| getExpr
       and body =
         allocRequest ~mallocLoc:innerMallocLoc ~writeToAddr:None body >>| getExpr
-        (*|> declareAllUsedAllocs*)
       in
       return
         Expr.
@@ -943,19 +961,19 @@ let rec allocRequest
               ; secondBinding = arg.secondBinding
               ; production = convertProductionTuple arg.production
               }
+          ; indexMode
           ; zero
           ; body
           ; d
           ; type' = canonicalizeType reduceType
           }
     in
-    let processScan Corn.Expr.{ arg; zero; body; d; type' = scanType } =
+    let processScan Corn.Expr.{ arg; zero; body; indexMode; d; type' = scanType } =
       let d = convertDimension d in
       let%bind zero = allocRequest ~mallocLoc ~writeToAddr:None zero >>| getExpr
       and body =
-        allocRequest ~mallocLoc:innerMallocLoc ~writeToAddr:None body
-        >>| getExpr
-        |> declareAllUsedAllocs
+        allocRequest ~mallocLoc:innerMallocLoc ~writeToAddr:None body >>| getExpr
+        (* |> declareAllUsedAllocs *)
       in
       let scanType = canonicalizeType scanType in
       let%bind scanResultMemInterim =
@@ -972,6 +990,7 @@ let rec allocRequest
                 }
             ; zero
             ; body
+            ; indexMode
             ; d
             ; scanResultMemFinal
             ; type' = scanType
@@ -1002,7 +1021,13 @@ let rec allocRequest
           malloc ~mallocLoc:innerMallocLoc interimResultMemType "reduce-interim-result"
         in
         let%bind interimResultMemHostFinal =
-          malloc ~mallocLoc interimResultMemType "reduce-interim-result"
+          (* if the reduce is part of kernel, then allocate host memory to upload results to *)
+          (* otherwise, we just need the device interim memory *)
+          match isKernel with
+          | true ->
+            malloc ~mallocLoc interimResultMemType "reduce-interim-result"
+            >>| fun e -> Some e
+          | false -> return None
         in
         return
         @@ ( Maybe.Just
@@ -1086,6 +1111,7 @@ let rec allocRequest
     let%bind consumer, consumerCopyRequired = processConsumer consumer in
     let loopBlock : (l, lInner, seqOrPar, unit, exists) Expr.loopBlock =
       { frameShape = convertShapeElement frameShape
+      ; indexMode
       ; mapArgs
       ; mapIotas
       ; mapBody
@@ -1205,6 +1231,7 @@ let rec allocRequest
   | LoopBlock loopBlock ->
     allocLoopBlock
       ~wrapLoopBlock:(fun loopBlock _ -> Expr.LoopBlock loopBlock)
+      ~isKernel:false
       ~blocks:0
       ~innerMallocLoc:mallocLoc
       ~createMapTargetAddr:(fun targetAddr -> targetAddr)
@@ -1223,6 +1250,7 @@ let rec allocRequest
           ; blocks
           ; threads
           })
+      ~isKernel:true
       ~blocks
       ~innerMallocLoc:MallocDevice
       ~createMapTargetAddr:(fun _ -> None)
@@ -1237,7 +1265,15 @@ let rec allocRequest
       ~outerBindingsForMapBody
       ~writeToAddr:targetAddr
       Corn.Expr.
-        { frameShape; mapArgs; mapIotas; mapBody; mapBodyMatcher; mapResults; type' }
+        { frameShape
+        ; indexMode
+        ; mapArgs
+        ; mapIotas
+        ; mapBody
+        ; mapBodyMatcher
+        ; mapResults
+        ; type'
+        }
       : (unit Expr.mapInKernel * Mem.t, _) AllocAcc.t
       =
       let type' = canonicalizeType type' in
@@ -1254,9 +1290,11 @@ let rec allocRequest
       in
       let rec createTargetAddrMapArgs type' = function
         | None ->
+          Stdio.prerr_endline "Create target addr map args in None case";
           let%bind mem = malloc ~mallocLoc:MallocDevice type' "map-mem" in
           createTargetAddrMapArgs type' (Some (TargetValue mem))
         | Some (TargetValue targetValue) ->
+          Stdio.prerr_endline "Create target addr map args in Some case";
           let elementType =
             guillotineType ~expectedSize:(convertShapeElement frameShape)
             @@ Mem.type' targetValue
@@ -1271,6 +1309,7 @@ let rec allocRequest
           , [ Expr.{ memBinding = binding; mem = targetValue } ]
           , targetValue )
         | Some (TargetValues targetValues) ->
+          Stdio.prerr_endline "Create target addr map args in Some values case";
           let elementTypes = typeAsTuple type' in
           let%map targets, memArgs, mapMems =
             List.zip_exn elementTypes targetValues
@@ -1288,6 +1327,7 @@ let rec allocRequest
       let mapResultTargets =
         match mapResultTargetAddr with
         | None ->
+          (* create a map with an entry for each id with default value None *)
           mapResults
           |> List.map ~f:(fun id -> id, None)
           |> Map.of_alist_reduce (module Identifier) ~f:(fun a _ -> a)
@@ -1383,6 +1423,7 @@ let rec allocRequest
         @ mapBodyMemArgs
       in
       ( ({ frameShape = convertShapeElement frameShape
+         ; indexMode
          ; mapArgs
          ; mapIotas
          ; mapBody

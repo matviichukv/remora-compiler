@@ -26,7 +26,7 @@ module Make (SB : Source.BuilderT) = struct
       @> (module FuseAndSimplify.Stage (SB))
       @> (module Show.Passthrough.Stage (Nested) (SB))
       @> (module Kernelize.Stage (SB))
-      @> (module Show.Passthrough.Stage (Corn) (SB))
+      (* @> (module Show.Passthrough.Stage (Corn) (SB)) *)
       @> (module Alloc.Stage (SB))
       (* @> (module Show.Passthrough.Stage (Acorn.SansCaptures) (SB)) *)
       @> (module Capture.Stage (SB))

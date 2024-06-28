@@ -101,6 +101,7 @@ module Expr = struct
     { arg : reduceArg
     ; zero : 'lOuter t
     ; body : 'lInner t
+    ; indexMode : Nested.Expr.indexMode option
     ; d : Index.dimension
     ; type' : Type.t
     }
@@ -394,10 +395,11 @@ module Expr = struct
       fun ?(characterName = "reduce")
           sexp_of_a
           sexp_of_b
-          { arg; zero; body; d = _; type' = _ } ->
+          { arg; zero; body; indexMode; d = _; type' = _ } ->
       let opName = [%string "%{characterName}-zero"] in
       Sexp.List
         [ Sexp.Atom opName
+        ; [%sexp_of: Nested.Expr.indexMode option] indexMode
         ; sexp_of_t sexp_of_a zero
         ; Sexp.List
             [ Sexp.Atom (Identifier.show arg.firstBinding)
@@ -456,7 +458,9 @@ module Expr = struct
       =
       fun sexp_of_a sexp_of_b -> function
       | ReduceSeq reduce -> sexp_of_reduceLike sexp_of_a sexp_of_b reduce
-      | ReducePar reduce -> sexp_of_parReduce sexp_of_a sexp_of_b reduce
+      | ReducePar { reduce; outerBody } ->
+        Sexp.List
+          [ sexp_of_reduceLike sexp_of_a sexp_of_b reduce; sexp_of_t sexp_of_a outerBody ]
       | ScanSeq scan -> sexp_of_reduceLike sexp_of_a sexp_of_b scan
       | ScanPar scan -> sexp_of_reduceLike sexp_of_a sexp_of_b scan
       | Fold fold -> sexp_of_fold sexp_of_a sexp_of_b fold

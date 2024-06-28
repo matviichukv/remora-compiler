@@ -1121,14 +1121,14 @@ let simplify expr =
     (* if not droppedAny then return optimized else loop tupleReduced *)
     let optimized1 = optimize expr in
     (* Stdio.print_endline *)
-    (* (Printf.sprintf "Optimized1 :\n%s" (Sexp.to_string_hum (Expr.sexp_of_t optimized1))); *)
+    (*   (Printf.sprintf "Optimized1 :\n%s" (Sexp.to_string_hum (Expr.sexp_of_t optimized1))); *)
     (* Hoist variables that can be hoisted *)
     let decHoisted, hoistings = hoistDeclarationsInBody optimized1 ~bindings:All in
     assert (List.length hoistings = 0);
     (* Stdio.print_endline *)
-    (* (Printf.sprintf *)
-    (* "Dec Hoisted :\n%s" *)
-    (* (Sexp.to_string_hum (Expr.sexp_of_t decHoisted))); *)
+    (*   (Printf.sprintf *)
+    (*      "Dec Hoisted :\n%s" *)
+    (*      (Sexp.to_string_hum (Expr.sexp_of_t decHoisted))); *)
     (* Perform standard optimizations *)
     (* let optimized2 = optimize decHoisted in *)
     (* Re-hoist and re-optimize if anything changed *)
@@ -1150,16 +1150,16 @@ let simplify expr =
             ~body:exprHoistedWithoutDecs
       in
       (* Stdio.print_endline *)
-      (* (Printf.sprintf *)
-      (* "Before tuple elimination:\n%s" *)
-      (* (Sexp.to_string_hum (Expr.sexp_of_t exprHoisted))); *)
+      (*   (Printf.sprintf *)
+      (*      "Before tuple elimination:\n%s" *)
+      (*      (Sexp.to_string_hum (Expr.sexp_of_t exprHoisted))); *)
       (* return exprHoisted *)
       (* Reduce tuples (remove unused elements) *)
       let%bind { res = reduced; droppedAny } = TupleReduce.reduceTuples exprHoisted in
       (* Stdio.print_endline *)
-      (* (Printf.sprintf *)
-      (* "After tuple elimination:\n%s" *)
-      (* (Sexp.to_string_hum (Expr.sexp_of_t reduced))); *)
+      (*   (Printf.sprintf *)
+      (*      "After tuple elimination:\n%s" *)
+      (*      (Sexp.to_string_hum (Expr.sexp_of_t reduced))); *)
       (* If reducing tuples did anything, loop. Otherwise, return *)
       (* return exprHoisted *)
       if droppedAny then loop reduced else return exprHoisted)

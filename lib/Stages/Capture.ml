@@ -126,7 +126,7 @@ module Captures = struct
     | Index { mem; offset; type' } -> getInMem mem + getInDim offset + getInType type'
   ;;
 
-  let rec getInExpr : (device, unit) Acorn.Expr.t -> t = function
+  let rec getInExpr : type l. (l, unit) Acorn.Expr.t -> t = function
     | Ref ref -> of_ref ref
     | BoxValue { box; type' = _ } -> getInExpr box
     | IndexLet { indexArgs; body; type' = _ } ->
@@ -161,6 +161,7 @@ module Captures = struct
       argCaptures + bodyCaptures
     | LoopBlock
         { frameShape
+        ; indexMode = _
         ; mapArgs
         ; mapIotas
         ; mapMemArgs
@@ -185,20 +186,62 @@ module Captures = struct
       let consumerCaptures =
         match consumer with
         | Nothing -> empty
-        | Just (ReduceSeq { arg; zero; body; d; type' = _ }) ->
+        | Just (ReduceSeq { arg; zero; body; d; indexMode = _; type' = _ }) ->
           let zeroCaptures = getInExpr zero in
           let argBindings =
             Set.of_list (module Identifier) [ arg.firstBinding; arg.secondBinding ]
           in
           let bodyCaptures = getInExpr body - argBindings in
           zeroCaptures + bodyCaptures + getInDim d
-        | Just (ScanSeq { arg; zero; body; d; scanResultMemFinal; type' = _ }) ->
+        | Just
+            (ReducePar
+              { reduce = { arg; zero; body; d; indexMode = _; type' = _ }
+              ; interimResultMemDeviceInterim
+              ; interimResultMemHostFinal
+              ; outerBody
+              }) ->
+          let zeroCaptures = getInExpr zero in
+          let argBindings =
+            Set.of_list (module Identifier) [ arg.firstBinding; arg.secondBinding ]
+          in
+          let bodyCaptures = getInExpr body - argBindings in
+          let outerBodyCaptures = getInExpr outerBody - argBindings in
+          let interimResultMemHostFinalCaptures =
+            match interimResultMemHostFinal with
+            | None -> empty
+            | Some interimResultMemHostFinal -> getInMem interimResultMemHostFinal
+          in
+          zeroCaptures
+          + bodyCaptures
+          + getInDim d
+          + getInMem interimResultMemDeviceInterim
+          + interimResultMemHostFinalCaptures
+          + outerBodyCaptures
+        | Just
+            (ScanSeq { arg; zero; body; d; scanResultMemFinal; indexMode = _; type' = _ })
+          ->
           let zeroCaptures = getInExpr zero in
           let argBindings =
             Set.of_list (module Identifier) [ arg.firstBinding; arg.secondBinding ]
           in
           let bodyCaptures = getInExpr body - argBindings in
           zeroCaptures + bodyCaptures + getInDim d + getInMem scanResultMemFinal
+        | Just
+            (ScanPar
+              { scan =
+                  { arg; zero; body; indexMode = _; d; scanResultMemFinal; type' = _ }
+              ; scanResultMemDeviceInterim
+              }) ->
+          let zeroCaptures = getInExpr zero in
+          let argBindings =
+            Set.of_list (module Identifier) [ arg.firstBinding; arg.secondBinding ]
+          in
+          let bodyCaptures = getInExpr body - argBindings in
+          zeroCaptures
+          + bodyCaptures
+          + getInDim d
+          + getInMem scanResultMemDeviceInterim
+          + getInMem scanResultMemFinal
         | Just
             (Fold
               { zeroArg
@@ -234,6 +277,8 @@ module Captures = struct
       + bodyCaptures
       + consumerCaptures
       + getInMem mapResultMemFinal
+    | LoopKernel _ -> raise Unimplemented.default
+    | IfParallelismHitsCutoff _ -> raise Unimplemented.default
     | Box { indices; body; type' = _ } ->
       getList indices ~f:(fun { expr; index } -> getInExpr expr + getInIndex index)
       + getInExpr body
@@ -252,7 +297,7 @@ module Captures = struct
     | Literal _ -> empty
     | Getmem { addr; type' = _ } -> getInMem addr
 
-  and getInStatement : (device, unit) Acorn.Expr.statement -> t = function
+  and getInStatement : type l. (l, unit) Acorn.Expr.statement -> t = function
     | Putmem { addr; expr; type' = _ } -> getInMem addr + getInExpr expr
     | ComputeForSideEffects expr -> getInExpr expr
     | Statements statements -> getList statements ~f:getInStatement
@@ -274,6 +319,7 @@ module Captures = struct
       let bodyCaptures = getInStatement body - bindings in
       argCaptures + bodyCaptures
     | ReifyShapeIndex { shape; mem } -> getInShape shape + getInMem mem
+    | MapKernel _ -> raise Unimplemented.default
   ;;
 end
 
@@ -296,6 +342,7 @@ let rec annotateExpr : type l. l Expr.sansCaptures -> l Expr.withCaptures = func
     Let { args = List.map args ~f:annotateArg; body = annotateExpr body }
   | LoopBlock
       { frameShape
+      ; indexMode = None
       ; mapArgs
       ; mapIotas
       ; mapMemArgs
@@ -306,20 +353,30 @@ let rec annotateExpr : type l. l Expr.sansCaptures -> l Expr.withCaptures = func
       ; consumer
       ; type'
       } ->
+    (* because of no index mode, this has to be sequential *)
     let consumer =
       Maybe.map consumer ~f:(function
-        | ReduceSeq { arg; zero; body; d; type' } ->
+        | ReduceSeq { arg; zero; body; d; indexMode; type' } ->
           Expr.ReduceSeq
-            { arg; zero = annotateExpr zero; body = annotateExpr body; d; type' }
-        | ScanSeq { arg; zero; body; d; scanResultMemFinal; type' } ->
+            { arg
+            ; zero = annotateExpr zero
+            ; body = annotateExpr body
+            ; d
+            ; indexMode
+            ; type'
+            }
+        | ReducePar _ -> raise Unreachable.default
+        | ScanSeq { arg; zero; body; d; scanResultMemFinal; indexMode; type' } ->
           Expr.ScanSeq
             { arg
             ; zero = annotateExpr zero
             ; body = annotateExpr body
             ; d
             ; scanResultMemFinal
+            ; indexMode
             ; type'
             }
+        | ScanPar _ -> raise Unreachable.default
         | Fold { zeroArg; arrayArgs; mappedMemArgs; reverse; body; d; character; type' }
           ->
           Expr.Fold
@@ -337,6 +394,77 @@ let rec annotateExpr : type l. l Expr.sansCaptures -> l Expr.withCaptures = func
     in
     LoopBlock
       { frameShape
+      ; indexMode = None
+      ; mapArgs
+      ; mapIotas
+      ; mapMemArgs
+      ; mapBody = annotateExpr mapBody
+      ; mapBodyMatcher
+      ; mapResults
+      ; mapResultMemFinal
+      ; consumer
+      ; type'
+      }
+  | LoopBlock
+      { frameShape
+      ; indexMode
+      ; mapArgs
+      ; mapIotas
+      ; mapMemArgs
+      ; mapBody
+      ; mapBodyMatcher
+      ; mapResults
+      ; mapResultMemFinal
+      ; consumer
+      ; type'
+      } ->
+    (* index mode has to be some so this is a parallel thing *)
+    let consumer =
+      Maybe.map consumer ~f:(function
+        | ReducePar
+            { reduce = { arg; zero; body; indexMode; d; type' }
+            ; interimResultMemDeviceInterim
+            ; interimResultMemHostFinal
+            ; outerBody
+            } ->
+          Expr.ReducePar
+            { reduce =
+                { arg
+                ; zero = annotateExpr zero
+                ; body = annotateExpr body
+                ; d
+                ; indexMode
+                ; type'
+                }
+            ; interimResultMemDeviceInterim
+            ; interimResultMemHostFinal
+            ; outerBody = annotateExpr outerBody
+            }
+        | ScanPar
+            { scan = { arg; zero; body; indexMode; d; scanResultMemFinal; type' }
+            ; scanResultMemDeviceInterim
+            } ->
+          Expr.ScanPar
+            { scan =
+                { arg
+                ; zero = annotateExpr zero
+                ; body = annotateExpr body
+                ; indexMode
+                ; d
+                ; scanResultMemFinal
+                ; type'
+                }
+            ; scanResultMemDeviceInterim
+            }
+        | Scatter { valuesArg; indicesArg; dIn; dOut; memInterim; memFinal; type' } ->
+          Expr.Scatter { valuesArg; indicesArg; dIn; dOut; memInterim; memFinal; type' }
+        | ScanSeq _ -> raise Unreachable.default
+        | ReduceSeq _ -> raise Unreachable.default
+        | Fold _ -> raise Unreachable.default)
+    in
+    LoopBlock
+      { frameShape
+      ; indexMode
       ; mapArgs
       ; mapIotas
       ; mapMemArgs
@@ -351,6 +479,7 @@ let rec annotateExpr : type l. l Expr.sansCaptures -> l Expr.withCaptures = func
       { kernel =
           { loopBlock =
               { frameShape
+              ; indexMode
               ; mapArgs
               ; mapIotas
               ; mapMemArgs
@@ -384,7 +513,7 @@ let rec annotateExpr : type l. l Expr.sansCaptures -> l Expr.withCaptures = func
       match consumer with
       | Just
           (ReducePar
-            { reduce = { arg; zero; body; d; type' }
+            { reduce = { arg; zero; body; d; indexMode; type' }
             ; interimResultMemDeviceInterim
             ; interimResultMemHostFinal
             ; outerBody
@@ -392,18 +521,25 @@ let rec annotateExpr : type l. l Expr.sansCaptures -> l Expr.withCaptures = func
         let bindings =
           Set.of_list (module Identifier) [ arg.firstBinding; arg.secondBinding ]
         in
-        ( Captures.(getInExpr body - bindings + getInDim d)
+        ( Captures.(
+            getInExpr body - bindings + getInDim d + (getInExpr outerBody - bindings))
         , Maybe.Just
             (Expr.ReducePar
                { reduce =
-                   { arg; zero = annotateExpr zero; body = annotateExpr body; d; type' }
+                   { arg
+                   ; zero = annotateExpr zero
+                   ; body = annotateExpr body
+                   ; d
+                   ; indexMode
+                   ; type'
+                   }
                ; interimResultMemDeviceInterim
                ; interimResultMemHostFinal
                ; outerBody = annotateExpr outerBody
                }) )
       | Just
           (ScanPar
-            { scan = { arg; zero; body; d; scanResultMemFinal; type' }
+            { scan = { arg; zero; body; d; scanResultMemFinal; indexMode; type' }
             ; scanResultMemDeviceInterim
             }) ->
         let bindings =
@@ -418,6 +554,7 @@ let rec annotateExpr : type l. l Expr.sansCaptures -> l Expr.withCaptures = func
                    ; body = annotateExpr body
                    ; d
                    ; scanResultMemFinal
+                   ; indexMode
                    ; type'
                    }
                ; scanResultMemDeviceInterim
@@ -433,6 +570,7 @@ let rec annotateExpr : type l. l Expr.sansCaptures -> l Expr.withCaptures = func
       { kernel =
           { loopBlock =
               { frameShape
+              ; indexMode
               ; mapArgs
               ; mapIotas
               ; mapMemArgs
@@ -496,7 +634,7 @@ and annotateStatement
       ; threads
       } ->
     let rec annotateMapInKernel
-      Expr.{ frameShape; mapArgs; mapIotas; mapMemArgs; mapBody; type' }
+      Expr.{ frameShape; mapArgs; mapIotas; mapMemArgs; mapBody; indexMode; type' }
       : Expr.captures * Expr.captures Expr.mapInKernel
       =
       let mapBodyBindings =
@@ -525,7 +663,7 @@ and annotateStatement
       let captures =
         Captures.(mapArgCaptures + mapMemArgCaptures + (bodyCaptures - mapBodyBindings))
       in
-      captures, { frameShape; mapArgs; mapIotas; mapMemArgs; mapBody; type' }
+      captures, { frameShape; mapArgs; mapIotas; mapMemArgs; mapBody; indexMode; type' }
     in
     let captures, mapKernel = annotateMapInKernel mapKernel in
     MapKernel
