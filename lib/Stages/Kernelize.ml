@@ -675,6 +675,7 @@ type loopStructureTree =
   | LoopNode :
       { children : loopStructureTree list
       ; frameShape : Index.shapeElement
+      ; label : Identifier.t
       }
       -> loopStructureTree
 [@@deriving sexp_of]
@@ -724,7 +725,7 @@ let rec extractLoopStructure (expr : Nested.t) : loopStructureTree =
           | LoopNode _ -> true)
         [ mapBodyChild; consumerChild ]
     in
-    LoopNode { children; frameShape = lb.frameShape }
+    LoopNode { children; frameShape = lb.frameShape; label = lb.label }
   | Box b -> extractLoopStructure b.body
   | Values { elements; type' = _ } ->
     let children = extractLoopStructureList elements in
@@ -1041,7 +1042,9 @@ let rec findAllParOptions (expr : Nested.t) (structureMap : IndexingModeDrafting
     Let { args = newArgs; body = newBody; type' }, paths
   | LoopBlock lb ->
     let _, innerPaths = findAllParOptions lb.mapBody structureMap in
-    let innerIterSpace = getIterationSpace lb.mapBody in
+    let innerIterSpaceMap = getIterationSpace lb.mapBody in
+    let innerIterSpaceConsumer = getIterationSpaceConsumer lb.consumer in
+    let innerIterSpace = innerIterSpaceConsumer + innerIterSpaceMap in
     let innerPaths =
       match innerPaths with
       | [] ->
@@ -1052,13 +1055,46 @@ let rec findAllParOptions (expr : Nested.t) (structureMap : IndexingModeDrafting
         ]
       | innerPaths -> innerPaths
     in
+    if Int.equal 3146 (Identifier.uniqueNum lb.label)
+    then
+      innerIterSpace
+      |> [%sexp_of: int]
+      |> Sexp.to_string_hum
+      |> Printf.sprintf "LoopBlock 3146 inner:\n%s"
+      |> Stdio.print_endline;
     (* Stdio.print_endline *)
     (*   (Printf.sprintf "Calculating new paths, we start with %d" (List.length innerPaths)); *)
     let newPossiblePaths =
       List.concat_map innerPaths ~f:(fun { indexModeTree; inner; extensible } ->
+        let zeroPaths, bodyPaths = findAllParOptionsConsumer lb.consumer structureMap in
+        let allConsumerPathsCombos =
+          List.cartesian_product zeroPaths bodyPaths
+          (* |> List.filter ~f:(fun (a, b) -> (not a.extensible) && not b.extensible) *)
+        in
         let structureMap =
           IndexingModeDrafting.updateStructureWithIndexModeTree structureMap indexModeTree
         in
+        (* if Int.equal 4754 (Identifier.uniqueNum lb.label) *)
+        (* then *)
+        (*   zeroPaths *)
+        (*   |> [%sexp_of: parPath list] *)
+        (*   |> Sexp.to_string_hum *)
+        (*   |> Printf.sprintf "LoopBlock 4754 zero:\n%s" *)
+        (*   |> Stdio.print_endline; *)
+        (* if Int.equal 4754 (Identifier.uniqueNum lb.label) *)
+        (* then *)
+        (*   bodyPaths *)
+        (*   |> [%sexp_of: parPath list] *)
+        (*   |> Sexp.to_string_hum *)
+        (*   |> Printf.sprintf "LoopBlock 4754 body:\n%s" *)
+        (*   |> Stdio.print_endline; *)
+        (* if Int.equal 4754 (Identifier.uniqueNum lb.label) *)
+        (* then *)
+        (*   allConsumerPathsCombos *)
+        (*   |> [%sexp_of: (parPath * parPath) list] *)
+        (*   |> Sexp.to_string_hum *)
+        (*   |> Printf.sprintf "LoopBlock 4754 cons:\n%s" *)
+        (*   |> Stdio.print_endline; *)
         (* (indexModeTree, structureMap) *)
         (* |> [%sexp_of: *)
         (*      IndexingModeDrafting.index_tree_cuda_t * IndexingModeDrafting.cuda_t] *)
@@ -1066,8 +1102,32 @@ let rec findAllParOptions (expr : Nested.t) (structureMap : IndexingModeDrafting
         (* |> Printf.sprintf "Index tree and structure map: %s" *)
         (* |> Stdio.print_endline; *)
         let loopBlockPar = IndexingModeDrafting.tryToParallelizeCUDA structureMap lb in
+        (* if Int.equal 6093 (Identifier.uniqueNum lb.label) *)
+        (* then *)
+        (*   structureMap *)
+        (*   |> [%sexp_of: IndexingModeDrafting.cuda_t] *)
+        (*   |> Sexp.to_string_hum *)
+        (*   |> Printf.sprintf "LoopBlock 6093 str map:\n%s" *)
+        (*   |> Stdio.print_endline; *)
+        (* if Int.equal 6093 (Identifier.uniqueNum lb.label) *)
+        (* then *)
+        (*   indexModeTree *)
+        (*   |> [%sexp_of: IndexingModeDrafting.index_tree_cuda_t] *)
+        (*   |> Sexp.to_string_hum *)
+        (*   |> Printf.sprintf "LoopBlock 6093 idx tree:\n%s" *)
+        (*   |> Stdio.print_endline; *)
         match loopBlockPar with
-        | None -> [ { indexModeTree; inner; extensible = false } ]
+        | None ->
+          (match lb.consumer with
+           | None -> [ { indexModeTree; inner; extensible = false } ]
+           | Some _ ->
+             List.concat_map allConsumerPathsCombos ~f:(fun (a, b) ->
+               let inner = innerIterSpaceMap + a.inner + b.inner in
+               let indexModeTree =
+                 IndexingModeDrafting.ParallelizationStructureCUDA.Branches
+                   [ indexModeTree; a.indexModeTree; b.indexModeTree ]
+               in
+               [ { indexModeTree; inner; extensible = false } ]))
         | Some loopBlockIndex ->
           let loopBlockIndex =
             IndexingModeDrafting.createIndexModeAlloc
@@ -1075,12 +1135,34 @@ let rec findAllParOptions (expr : Nested.t) (structureMap : IndexingModeDrafting
               ~indexMode:loopBlockIndex
           in
           if not extensible
-          then [ { indexModeTree; inner; extensible } ]
+          then (
+            match lb.consumer with
+            | None -> [ { indexModeTree; inner; extensible } ]
+            | Some _ ->
+              List.concat_map allConsumerPathsCombos ~f:(fun (a, b) ->
+                let inner = innerIterSpaceMap + a.inner + b.inner in
+                let indexModeTree =
+                  IndexingModeDrafting.ParallelizationStructureCUDA.Branches
+                    [ indexModeTree; a.indexModeTree; b.indexModeTree ]
+                in
+                [ { indexModeTree; inner; extensible } ]))
           else if not (IndexingModeDrafting.hasBeenParallelized indexModeTree)
           then (
-            (* Stdio.print_endline "Working on unparred path"; *)
             (*we haven't done par on this path*)
-            let dontPar = { indexModeTree; inner; extensible } in
+            let allocatedThisLoop =
+              Option.value loopBlockIndex.indexMode.allocatedThreads ~default:1
+              * Option.value loopBlockIndex.indexMode.allocatedBlocks ~default:1
+            in
+            let dontPar = { indexModeTree; inner = innerIterSpace; extensible } in
+            let dontParWithParConsumer =
+              List.concat_map allConsumerPathsCombos ~f:(fun (a, b) ->
+                let inner = (innerIterSpaceMap * allocatedThisLoop) + a.inner + b.inner in
+                let indexModeTree =
+                  IndexingModeDrafting.ParallelizationStructureCUDA.Branches
+                    [ a.indexModeTree; b.indexModeTree ]
+                in
+                [ { indexModeTree; inner; extensible = false } ])
+            in
             let extTreeOpt =
               IndexingModeDrafting.appendIndexToTree [ loopBlockIndex ] indexModeTree
             in
@@ -1095,18 +1177,49 @@ let rec findAllParOptions (expr : Nested.t) (structureMap : IndexingModeDrafting
                 ; extensible = extExtensible
                 }
               in
-              [ dontPar; startPar ])
+              let res = List.append [ dontPar; startPar ] dontParWithParConsumer in
+              if Int.equal 4754 (Identifier.uniqueNum lb.label)
+              then
+                res
+                |> [%sexp_of: parPath list]
+                |> Sexp.to_string_hum
+                |> Printf.sprintf "LoopBlock 4754 foo:\n%s"
+                |> Stdio.print_endline;
+              res)
           else (
+            (* has been parallelized and extensible *)
             let extTreeOpt =
               IndexingModeDrafting.appendIndexToTree [ loopBlockIndex ] indexModeTree
             in
             match extTreeOpt with
             | None -> raise Unimplemented.default
             | Some tree ->
-              let continuePar = { indexModeTree = tree; inner; extensible } in
+              let continuePar =
+                { indexModeTree = tree
+                ; inner = inner + innerIterSpaceConsumer
+                ; extensible
+                }
+              in
+              (* TODO: i think this is redundant because of the first case but not fully sure *)
               let stopPar = { indexModeTree; inner; extensible = false } in
-              [ continuePar; stopPar ]))
+              let stopParWithParConsumer =
+                List.concat_map allConsumerPathsCombos ~f:(fun (a, b) ->
+                  let inner = inner + a.inner + b.inner in
+                  let indexModeTree =
+                    IndexingModeDrafting.ParallelizationStructureCUDA.Branches
+                      [ indexModeTree; a.indexModeTree; b.indexModeTree ]
+                  in
+                  [ { indexModeTree; inner; extensible = false } ])
+              in
+              List.append stopParWithParConsumer [ continuePar; stopPar ]))
     in
+    if Int.equal 3146 (Identifier.uniqueNum lb.label)
+    then
+      newPossiblePaths
+      |> [%sexp_of: parPath list]
+      |> Sexp.to_string_hum
+      |> Printf.sprintf "LoopBlock 3146 new paths:\n%s"
+      |> Stdio.print_endline;
     (* newPossiblePaths *)
     (* |> [%sexp_of: parPath list] *)
     (* |> Sexp.to_string_hum *)
@@ -1157,16 +1270,13 @@ and findAllParOptionsList
   match elements with
   | [] -> elements, []
   | elements ->
-    (* This is probably pretty suboptimal, but searching the entire space is probably too hard and
-       annoying (from data design perspective) *)
-    (* TODO: add Branches here*)
     let allSegmentedPaths =
       List.map elements ~f:(fun e ->
-        let _, paths = findAllParOptions e structureMap in
-        paths)
+        let e, paths = findAllParOptions e structureMap in
+        e, paths)
     in
     let branchedApproach =
-      List.filter_map allSegmentedPaths ~f:(fun paths ->
+      List.filter_map allSegmentedPaths ~f:(fun (_, paths) ->
         if List.is_empty paths
         then None
         else (
@@ -1186,12 +1296,25 @@ and findAllParOptionsList
                   if IndexingModeDrafting.equal_index_tree_cuda_t
                        newBest
                        best.indexModeTree
-                  then path.inner
-                  else best.inner
+                  then best.inner
+                  else path.inner
                 in
                 { indexModeTree = newBest; inner = newInner; extensible = false })
           in
           Some bestPath))
+    in
+    let allSegmentedPaths =
+      List.map allSegmentedPaths ~f:(fun (e, paths) ->
+        (* inner from all other elements since those won't get parallelized *)
+        let otherInner =
+          elements
+          |> List.filter ~f:(fun e2 -> not (Nested.Expr.equal e2 e))
+          |> List.fold ~init:0 ~f:(fun acc e -> acc + getIterationSpace e)
+        in
+        let paths =
+          List.map paths ~f:(fun p -> { p with inner = p.inner + otherInner })
+        in
+        paths)
     in
     let branchPathTree =
       IndexingModeDrafting.ParallelizationStructureCUDA.Branches
@@ -1200,67 +1323,99 @@ and findAllParOptionsList
     let branchTreeInner =
       List.fold branchedApproach ~init:0 ~f:(fun acc b -> acc + b.inner)
     in
+    let branchExt =
+      List.for_all branchedApproach ~f:(fun b ->
+        not (IndexingModeDrafting.hasBeenParallelized b.indexModeTree))
+    in
     let branchPath =
-      { indexModeTree = branchPathTree; inner = branchTreeInner; extensible = false }
+      { indexModeTree = branchPathTree; inner = branchTreeInner; extensible = branchExt }
     in
+    (* branchPath *)
+    (* |> [%sexp_of: parPath] *)
+    (* |> Sexp.to_string_hum *)
+    (* |> Printf.sprintf "Branch path:\n%s" *)
+    (* |> Stdio.print_endline; *)
     let allPaths = List.concat allSegmentedPaths in
-    let extensiblePaths, nonExtensiblePaths =
-      List.partition_tf allPaths ~f:(fun { indexModeTree = _; inner = _; extensible } ->
-        extensible)
-    in
+    (* let extensiblePaths, nonExtensiblePaths = *)
+    (*   List.partition_tf allPaths ~f:(fun { indexModeTree = _; inner = _; extensible } -> *)
+    (*     extensible) *)
+    (* in *)
     (* i don't have a good explanations why these two are different but
        from what i can tell, you wanna choose from 'completed' paths
        but for non-complete, you want to merge instead because you might grow it further *)
-    let bestExtensiblePath =
-      match extensiblePaths with
-      | [] -> []
-      | hd :: tl ->
-        let bestPath =
-          List.fold tl ~init:hd ~f:(fun best path ->
-            match best.indexModeTree, path.indexModeTree with
-            | FullPar bestTree, FullPar pathTree ->
-              let newBest =
-                IndexingModeDrafting.mergeIndexModeAllocTrees bestTree pathTree
-              in
-              { indexModeTree = FullPar newBest
-              ; inner = Int.max best.inner path.inner
-              ; extensible = true
-              }
-            | _ -> raise Unimplemented.default)
-        in
-        [ bestPath ]
-    in
-    let bestNonExtensiblePath =
-      if List.is_empty nonExtensiblePaths
-      then []
-      else (
-        let bestPath =
-          List.fold
-            (List.tl_exn nonExtensiblePaths)
-            ~init:(List.hd_exn nonExtensiblePaths)
-            ~f:(fun best path ->
-              let newBest =
-                IndexingModeDrafting.compareStructures
-                  best.indexModeTree
-                  path.indexModeTree
-                  best.inner
-                  path.inner
-              in
-              match newBest with
-              | None -> best
-              | Some newBest ->
-                let newInner =
-                  if IndexingModeDrafting.equal_index_tree_cuda_t
-                       newBest
-                       best.indexModeTree
-                  then best.inner
-                  else path.inner
-                in
-                { indexModeTree = newBest; inner = newInner; extensible = false })
-        in
-        [ bestPath ])
-    in
-    elements, branchPath :: List.append bestExtensiblePath bestNonExtensiblePath
+    (* let _ = *)
+    (*   match extensiblePaths with *)
+    (*   | [] -> [] *)
+    (*   | hd :: tl -> *)
+    (*     let bestPath = *)
+    (*       List.fold tl ~init:hd ~f:(fun best path -> *)
+    (*         match best.indexModeTree, path.indexModeTree with *)
+    (*         | FullPar bestTree, FullPar pathTree -> *)
+    (*           let newBest = *)
+    (*             IndexingModeDrafting.mergeIndexModeAllocTrees bestTree pathTree *)
+    (*           in *)
+    (*           { indexModeTree = FullPar newBest *)
+    (*           ; inner = Int.max best.inner path.inner *)
+    (*           ; extensible = true *)
+    (*           } *)
+    (*         | _ -> raise Unimplemented.default) *)
+    (*     in *)
+    (*     [ bestPath ] *)
+    (* in *)
+    (* let _ = *)
+    (*   if List.is_empty nonExtensiblePaths *)
+    (*   then [] *)
+    (*   else ( *)
+    (*     let bestPath = *)
+    (*       List.fold *)
+    (*         (List.tl_exn nonExtensiblePaths) *)
+    (*         ~init:(List.hd_exn nonExtensiblePaths) *)
+    (*         ~f:(fun best path -> *)
+    (*           let newBest = *)
+    (*             IndexingModeDrafting.compareStructures *)
+    (*               best.indexModeTree *)
+    (*               path.indexModeTree *)
+    (*               best.inner *)
+    (*               path.inner *)
+    (*           in *)
+    (*           match newBest with *)
+    (*           | None -> best *)
+    (*           | Some newBest -> *)
+    (*             let newInner = *)
+    (*               if IndexingModeDrafting.equal_index_tree_cuda_t *)
+    (*                    newBest *)
+    (*                    best.indexModeTree *)
+    (*               then best.inner *)
+    (*               else path.inner *)
+    (*             in *)
+    (*             { indexModeTree = newBest; inner = newInner; extensible = false }) *)
+    (*     in *)
+    (*     [ bestPath ]) *)
+    (* in *)
+    (* bestNonExtensiblePath *)
+    (* |> [%sexp_of: parPath list] *)
+    (* |> Sexp.to_string_hum *)
+    (* |> Printf.sprintf "Best non extensible:\n%s" *)
+    (* |> Stdio.print_endline; *)
+    (* elements, branchPath :: List.append bestExtensiblePath bestNonExtensiblePath *)
+    (* elements, branchPath :: bestExtensiblePath *)
+    elements, branchPath :: allPaths
+
+and findAllParOptionsConsumer (consumer : Nested.Expr.consumerOp option) structureMap =
+  match consumer with
+  | None -> [], []
+  | Some consumer ->
+    (match consumer with
+     | Nested.Expr.Reduce { arg = _; zero; body; d = _; character = _; type' = _ } ->
+       let _, zeroPaths = findAllParOptionsList [ zero ] structureMap in
+       let _, bodyPaths = findAllParOptionsList [ body ] structureMap in
+       zeroPaths, bodyPaths
+     | Nested.Expr.Fold
+         { zeroArg; arrayArgs = _; body; reverse = _; d = _; character = _; type' = _ } ->
+       let _, zeroPaths = findAllParOptionsList [ zeroArg.zeroValue ] structureMap in
+       let _, bodyPaths = findAllParOptionsList [ body ] structureMap in
+       zeroPaths, bodyPaths
+     | Nested.Expr.Scatter _ -> [], [])
 ;;
 
 let tableFromPath =

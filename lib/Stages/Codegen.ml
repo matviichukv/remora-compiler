@@ -1235,17 +1235,17 @@ let rec genStmnt
         | SubMaps { subMaps = _; maxBodySize } ->
           GenState.storeExpr ~name:"i" @@ Cx.(chunkVar / maxBodySize.device)
       in
-      GenState.writeIte
-        ~cond:Cx.(loopVar < intLit totalIterSpace)
-        ~thenBranch:
-          (let%bind () = genMapBodySetup ~loopVar ~mapArgs ~mapIotas ~mapMemArgs in
-           match mapBody with
-           | Statement statement -> genStmnt ~hostOrDevice:Device statement
-           | SubMaps { subMaps; maxBodySize } ->
-             subMaps
-             |> List.map ~f:(genMapBody Cx.(chunkVar % maxBodySize.device) totalIterSpace)
-             |> GenState.all_unit)
-        ~elseBranch:(return ())
+      (* GenState.writeIte *)
+      (*   ~cond:Cx.(loopVar < intLit totalIterSpace) *)
+      (*   ~thenBranch: *)
+      let%bind () = genMapBodySetup ~loopVar ~mapArgs ~mapIotas ~mapMemArgs in
+      match mapBody with
+      | Statement statement -> genStmnt ~hostOrDevice:Device statement
+      | SubMaps { subMaps; maxBodySize } ->
+        subMaps
+        |> List.map ~f:(genMapBody Cx.(chunkVar % maxBodySize.device) totalIterSpace)
+        |> GenState.all_unit
+      (* ~elseBranch:(return ()) *)
     in
     let%bind kernelName =
       GenState.defineFun
@@ -1277,9 +1277,10 @@ let rec genStmnt
                   (* ~initialValue:Cx.(blockIndex / innerBlocks * innerBlocks * intLit threads) *)
                   (* ~initialValue:Cx.((blockIndex * intLit threads) + threadIndex) *)
                 ~cond:(fun loopVar ->
-                  Cx.(loopVar < intLit threads * intLit blocks)
-                  (* Cx.(loopVar < annotatedMapKernel.bodySize.device) *))
-                ~loopVarUpdate:(Increment (Cx.intLit @@ (blocks * threads)))
+                  (* Cx.(loopVar < intLit threads * intLit blocks) *)
+                  Cx.(loopVar < annotatedMapKernel.bodySize.device))
+                  (* ~loopVarUpdate:(Increment (Cx.intLit @@ (blocks * threads))) *)
+                ~loopVarUpdate:(Increment annotatedMapKernel.bodySize.device)
                 ~body:(fun loopVar ->
                   genMapBody loopVar (blocks * threads) annotatedMapKernel)
             in
@@ -3648,13 +3649,40 @@ and genMallocLet
   =
   fun ~hostOrDevice ~genBody { memArgs; body } ->
   let open GenState.Let_syntax in
+  let isStaticArrayAlloc (memLoc : Expr.mallocLoc) (memType : Acorn.Type.t) =
+    match hostOrDevice, memLoc, memType with
+    | Device, MallocDevice, Array { element = _; shape } ->
+      NeList.for_all shape ~f:(fun shapeElement ->
+        match shapeElement with
+        | Index.Add { const = _; refs; lens } -> Map.is_empty refs && Map.is_empty lens
+        | Index.ShapeRef _ -> false)
+    | _, _, _ -> false
+  in
   let%bind () =
     memArgs
     |> List.map ~f:(fun { memBinding; memType; memLoc } ->
-      let%bind varType = genType ~wrapInPtr:true memType in
-      let%bind mem = genMalloc ~hostOrDevice ~store:false ~memLoc memType in
-      GenState.write
-      @@ C.Define { name = UniqueName memBinding; type' = Some varType; value = Some mem })
+      let staticArrayAlloc = isStaticArrayAlloc memLoc memType in
+      match hostOrDevice, memLoc, memType with
+      | Device, MallocDevice, Array { element; shape } when staticArrayAlloc ->
+        let size =
+          shape
+          |> NeList.map ~f:(fun shapeElement ->
+            match shapeElement with
+            | Index.Add { const; refs = _; lens = _ } -> const
+            | Index.ShapeRef _ -> raise Unreachable.default)
+          |> NeList.fold_left ~init:1 ~f:(fun acc a -> acc * a)
+        in
+        let%bind element = genType ?wrapInPtr:(Some false) (Atom element) in
+        let varType : C.type' = C.StaticArray { element; size } in
+        GenState.write
+        (* Statically allocated arrays live on stack and do not need to be initialized *)
+        @@ C.Define { name = UniqueName memBinding; type' = Some varType; value = None }
+      | _, _, _ ->
+        let%bind varType = genType ~wrapInPtr:true memType in
+        let%bind mem = genMalloc ~hostOrDevice ~store:false ~memLoc memType in
+        GenState.write
+        @@ C.Define
+             { name = UniqueName memBinding; type' = Some varType; value = Some mem })
     |> GenState.all_unit
   in
   genBody body

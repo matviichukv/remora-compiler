@@ -60,6 +60,10 @@ and type' =
       { base : type'
       ; args : type' list
       }
+  | StaticArray of
+      { element : type'
+      ; size : int
+      }
 
 and literal =
   | CharLiteral of char

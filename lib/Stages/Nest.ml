@@ -95,7 +95,6 @@ let rec nestArray : Nucleus.Expr.array -> (Nested.t, _) NestState.u =
     let type' = nestTypeArray type' in
     return (ReifyIndex { index; type' })
   | ArrayPrimitive (Map { args; iotaVar; frameShape; body; type' = _ }) ->
-    let%bind loopBlockLabel = NestState.createId "loop-block" in
     let rec decompose args parentIota frameShape =
       match frameShape with
       | [] ->
@@ -165,6 +164,7 @@ let rec nestArray : Nucleus.Expr.array -> (Nested.t, _) NestState.u =
           | None -> return (None, None, (fun loop -> loop), fun body -> body)
         in
         let mapArgs, nextArgs = List.unzip mapArgsAndNextArgs in
+        let%bind loopBlockLabel = NestState.createId "loop-block-map" in
         let%map mapBodyUnwrapped = decompose nextArgs newParent restFrameShape in
         let mapBody = mapBodyWrapper mapBodyUnwrapped in
         loopWrapper

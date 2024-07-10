@@ -88,13 +88,24 @@ let showName (name : name) =
 let rec showType : type' -> string = function
   | Char -> "char"
   | Int64 -> "int64_t"
-  | Float64 -> "double"
+  | Float64 -> "float"
   | Bool -> "bool"
   | Ptr t -> [%string "%{showType t}*"]
   | TypeRef name -> showName name
   | TypeInstantiation { base; args } ->
     let argsStr = args |> List.map ~f:showType |> String.concat ~sep:", " in
     [%string "%{showType base}<%{argsStr}>"]
+  | StaticArray { element; size } ->
+    [%string "%{showType element}[%{Int.to_string size}]"]
+;;
+
+(* needed for declarations since static arrays need to put size after variable name *)
+let showDeclLhs : type' -> name -> string =
+  fun type' name ->
+  match type' with
+  | StaticArray { element; size } ->
+    [%string "%{showType element} %{showName name}[%{Int.to_string size}]"]
+  | type' -> [%string "%{showType type'} %{showName name}"]
 ;;
 
 let rec showExpr = function
@@ -146,15 +157,25 @@ let rec showExpr = function
 let rec printStatement = function
   | Return expr -> printLine [%string "return %{showExpr expr};"]
   | Define { name; type'; value = rhs } ->
-    let typeStr = type' |> Option.map ~f:showType |> Option.value ~default:"auto" in
+    let defaultVar = [%string "auto %{showName name}"] in
+    let varStr =
+      type'
+      |> Option.map ~f:(fun t -> showDeclLhs t name)
+      |> Option.value ~default:defaultVar
+    in
     let rhsStr =
       match rhs with
       | None -> ""
       | Some rhs -> [%string " = %{showExpr rhs}"]
     in
-    printLine [%string "%{typeStr} %{showName name}%{rhsStr};"]
+    printLine [%string "%{varStr}%{rhsStr};"]
   | DefineDetail { attributes; name; type'; value = rhs; dims } ->
-    let typeStr = type' |> Option.map ~f:showType |> Option.value ~default:"auto" in
+    let defaultVar = [%string "auto %{showName name}"] in
+    let varStr =
+      type'
+      |> Option.map ~f:(fun t -> showDeclLhs t name)
+      |> Option.value ~default:defaultVar
+    in
     let rhsStr =
       match rhs with
       | None -> ""
@@ -166,7 +187,7 @@ let rec printStatement = function
     let dimsStr =
       dims |> List.map ~f:(fun dim -> [%string "[%{showExpr dim}]"]) |> String.concat
     in
-    printLine [%string "%{attributesStr}%{typeStr} %{showName name}%{dimsStr}%{rhsStr};"]
+    printLine [%string "%{attributesStr}%{varStr}%{dimsStr}%{rhsStr};"]
   | Assign { lhs; rhs } -> printLine [%string "%{showExpr lhs} = %{showExpr rhs};"]
   | Ite { cond; thenBranch; elseBranch = [] } ->
     let%bind () = printLine [%string "if (%{showExpr cond}) {"] in

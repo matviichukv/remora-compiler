@@ -2,55 +2,6 @@ open! Base
 
 type 'd parallelIndexing = { spec : 'd }
 
-(* One of three modes for 'indexing'/looping:
-   - Sequential
-   - Parallel - have to know all information at compile time
-   - Dynamic - choose at runtime depending on index variable values
-   - somehow need to correctly propagate this up so
-   - indexing is not broken at compile time *)
-type 'd indexingMode =
-  | Seq : 'd indexingMode
-  | Par : 'd parallelIndexing -> 'd indexingMode
-  | Dyn : ('d indexingMode * 'd indexingMode) -> 'd indexingMode
-
-type indexLevel =
-  | X
-  | Y
-  | Z
-
-type cudaIndexing =
-  (* thread indexing *)
-  | BlockIndex : { level : indexLevel } -> cudaIndexing
-  (* grid indexing *)
-  | GridIndex : { level : indexLevel } -> cudaIndexing
-
-type 'd fakeLoopBlock =
-  { indexingMode : 'd indexingMode
-  ; body : Nested.Expr.t
-  }
-
-let indexLevelToFieldName level : C.name =
-  match level with
-  | X -> C.Name.StrName "x"
-  | Y -> C.Name.StrName "y"
-  | Z -> C.Name.StrName "z"
-;;
-
-let cudaIndexingToCCode index : C.expr =
-  let idxVarNameStr =
-    match index with
-    | BlockIndex _ -> "threadIdx"
-    | GridIndex _ -> "blockIdx"
-  in
-  let levelFieldNameStr =
-    match index with
-    | BlockIndex { level } -> indexLevelToFieldName level
-    | GridIndex { level } -> indexLevelToFieldName level
-  in
-  FieldDeref
-    { value = VarRef (C.Name.StrName idxVarNameStr); fieldName = levelFieldNameStr }
-;;
-
 (* Execution device specific structure that decides the flattening/kernel allocation *)
 module type ParallelizationStructure = sig
   type t
@@ -100,7 +51,7 @@ module ParallelizationStructureCUDA = struct
 
   (* we don't want to do more iteration things than this because it might be better to run
      kernel multiple times at that point *)
-  let maximumInnerSeqSpace = 1024
+  let maximumInnerSeqSpace = 10000
 
   (* TODO: why so low? *)
   let maxReduceThreads = 32
@@ -270,7 +221,10 @@ module ParallelizationStructureCUDA = struct
            Some i
            (* we could not parallelize consumer so we cannot do any parallel things here *)
          | Some _ -> None)
-      | None, Some i -> Some i
+      | None, Some i ->
+        (match frameShape with
+         | Dynamic _ -> raise Unimplemented.default
+         | Static size -> if size < minimumThreads then None else Some i)
       | ( Some
             { allocatedThreads = allocatedThreadsMap
             ; allocatedBlocks = allocatedBlocksMap
@@ -330,37 +284,6 @@ module ParallelizationStructureCUDA = struct
     mergeIndexModeTreesAcc a b []
   ;;
 
-  (* let combineIndexModeTree (a : indexModeTree) (b : indexModeTree) =
-     match a, b with
-     | FullPar a, FullPar b ->
-     [ FullPar (mergeIndexModeTrees a b); Branches [ FullPar a; FullPar b ] ]
-     | a, b -> [ Branches [ a; b ] ]
-     ;;
-
-     let combineIndexModeTreeList (elements : indexModeTree list) =
-     match elements with
-     | [] -> []
-     | hd :: tl ->
-     let allFullPar =
-     List.for_all elements ~f:(function
-     | FullPar _ -> true
-     | Branches _ -> false)
-     in
-     if allFullPar
-     then (
-     match hd with
-     | FullPar tree ->
-     let allParTree =
-     List.fold tl ~init:tree ~f:(fun acc e ->
-     match e with
-     | FullPar t -> mergeIndexModeTrees t acc
-     | Branches _ -> raise Unreachable.default)
-     in
-     [ FullPar allParTree; Branches elements ]
-     | Branches _ -> raise Unreachable.default)
-     else [ Branches elements ]
-     ;; *)
-
   let updateStructureWithIndexModeTree (structure : t) (indexModeTree : indexMode list) =
     List.fold indexModeTree ~init:structure ~f:updateStructureWithIndexMode
   ;;
@@ -381,6 +304,12 @@ module ParallelizationStructureCUDA = struct
     threads * blocks
   ;;
 
+  let rec hasBeenParallelized (i : indexModeTree) : bool =
+    match i with
+    | FullPar tree -> not (List.is_empty tree)
+    | Branches branches -> List.exists branches ~f:(fun b -> hasBeenParallelized b)
+  ;;
+
   let updateStructureWithIndexModeTree (structure : t) (indexModeTree : indexModeTree) =
     match indexModeTree with
     | FullPar tree ->
@@ -395,7 +324,12 @@ module ParallelizationStructureCUDA = struct
                     >= calcIterationSpaceIndexList [ i.indexMode ]
                  then acc
                  else i.indexMode))))
-    | Branches _ -> { availableBlocks = None; availableThreads = None }
+    | Branches branches ->
+      let canExtend = not (hasBeenParallelized (Branches branches)) in
+      if canExtend
+      then (* we haven't parallelized yet so we haven't used any resources *)
+        structure
+      else { availableBlocks = None; availableThreads = None }
   ;;
 
   let rec calcIterationSpace (i : indexModeTree) : int =
@@ -433,21 +367,27 @@ module ParallelizationStructureCUDA = struct
     (* Stdio.print_endline (Printf.sprintf "A iter total: %d" a_iteration_total); *)
     (* Stdio.print_endline (Printf.sprintf "B iter total: %d" b_iteration_total); *)
     let a_strictly_better =
-      a_iteration_total > b_iteration_total && a_iteration_total <= maximumTotalThreads
+      a_iteration_total > b_iteration_total
+      (* && a_iteration_total <= maximumTotalThreads *)
+      && a_inner <= maximumInnerSeqSpace
     in
     let b_strictly_better =
-      b_iteration_total > a_iteration_total && b_iteration_total <= maximumTotalThreads
+      b_iteration_total > a_iteration_total
+      (* && b_iteration_total <= maximumTotalThreads *)
+      && b_inner <= maximumInnerSeqSpace
     in
     if a_strictly_better
     then Some a (* a has more parallelism and is below limit so it's better *)
     else if b_strictly_better
-    then Some b (* b has more parallelism and is below limit so it's better *)
-    else if a_iteration_total < b_iteration_total
-    then Some a (* b is over the limit *)
-    else if b_iteration_total < a_iteration_total
-    then Some b (* a is over the limit *)
-    else if a_iteration_total > maximumTotalThreads (* a and b same iteration space *)
-    then None (* both are over the limit so we want to do neither of them *)
+    then
+      Some b
+      (* b has more parallelism and is below limit so it's better *)
+      (* else if a_iteration_total < b_iteration_total *)
+      (* then Some a (\* b is over the limit *\) *)
+      (* else if b_iteration_total < a_iteration_total *)
+      (* then Some b (\* a is over the limit *\) *)
+      (* else if a_iteration_total > maximumTotalThreads (\* a and b same iteration space *\) *)
+      (* then None (\* both are over the limit so we want to do neither of them *\) *)
     else if a_inner < maximumInnerSeqSpace && a_inner > b_inner
     then Some a (* a has more inner instructions and below the limit so it's better *)
     else if b_inner < maximumInnerSeqSpace && b_inner > a_inner
@@ -456,22 +396,22 @@ module ParallelizationStructureCUDA = struct
     then Some a (* a and b are basically the same so we just return one of them*)
     else if a_inner < maximumInnerSeqSpace
     then Some a (* a has smaller inner space but it fits so it's better *)
-    else Some b (* same as above but for b *)
+    else if b_inner < maximumInnerSeqSpace
+    then Some b (* same as above but for b *)
+    else if a_inner < b_inner
+    then Some a (* too many in both, so we choose the smaller one *)
+    else Some b
   ;;
 
   let appendIndexToTree index indexModeTree =
     match indexModeTree with
     | FullPar tree -> Some (FullPar (index :: tree))
-    | Branches _ -> None
+    | Branches branches ->
+      let canExtend = not (hasBeenParallelized (Branches branches)) in
+      if canExtend then Some (FullPar [ index ]) else None
   ;;
 
   let emptyIndexTree = FullPar []
-
-  let rec hasBeenParallelized (i : indexModeTree) : bool =
-    match i with
-    | FullPar tree -> not (List.is_empty tree)
-    | Branches branches -> List.exists branches ~f:(fun b -> hasBeenParallelized b)
-  ;;
 end
 
 module AbstractParalelThing (P : ParallelizationStructure) = struct

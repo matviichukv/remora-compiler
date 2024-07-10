@@ -556,6 +556,7 @@ and updateMemSourceEnvFromMapBody = function
     maps |> List.map ~f:updateMemSourceEnvFromMapInKernel |> MemSourceState.all_unit
 ;;
 
+(* TODO: rename AllocAcc to AllocState *)
 module AllocAcc = struct
   type allocation =
     { binding : Identifier.t
@@ -700,6 +701,21 @@ let declareAllAllocs prog =
     match allocs with
     | [] -> result
     | _ :: _ ->
+      Acorn.Expr.MallocLet
+        { memArgs = List.map allocs ~f:AllocAcc.allocationToMallocMemArg; body = result }
+  in
+  return result
+;;
+
+let declareAllAllocsFun prog f =
+  let open CompilerState in
+  let open Let_syntax in
+  let%bind result, allocs = prog in
+  let result = f result in
+  let result =
+    match allocs with
+    | [] -> result
+    | _ ->
       Acorn.Expr.MallocLet
         { memArgs = List.map allocs ~f:AllocAcc.allocationToMallocMemArg; body = result }
   in
@@ -1218,16 +1234,35 @@ let rec allocRequest
     let argBindings =
       args |> List.map ~f:(fun arg -> arg.binding) |> Set.of_list (module Identifier)
     in
-    let%map args =
+    (* TODO: allocate everything from args in here locally so they are *)
+    (*       local to wherever the let lives (like declare a static    *)
+    (*       array inside the body kernel as a local array and not malloc *)
+    let args =
       args
       |> List.map ~f:(fun { binding; value } ->
         let%map value = allocExpr ~writeToAddr:None value in
         Expr.{ binding; value })
       |> all
-    and body =
+    in
+    let%bind body =
       avoidCaptures ~capturesToAvoid:argBindings @@ allocExpr ~writeToAddr:targetAddr body
     in
-    writtenExprToAllocResult @@ Let { args; body }
+    let%map declaredLet =
+      let open CompilerState in
+      let open Let_syntax in
+      let%bind args, allocs = args in
+      let body = Acorn.Expr.Let { args; body } in
+      let result =
+        match allocs with
+        | [] -> body
+        | _ ->
+          Acorn.Expr.MallocLet
+            { memArgs = List.map allocs ~f:AllocAcc.allocationToMallocMemArg; body }
+      in
+      return (result, [])
+    in
+    (* let%bind declaredLet = declareAllAllocsFun args (fun args -> Let { args; body }) in *)
+    writtenExprToAllocResult @@ declaredLet
   | LoopBlock loopBlock ->
     allocLoopBlock
       ~wrapLoopBlock:(fun loopBlock _ -> Expr.LoopBlock loopBlock)
@@ -1290,11 +1325,9 @@ let rec allocRequest
       in
       let rec createTargetAddrMapArgs type' = function
         | None ->
-          Stdio.prerr_endline "Create target addr map args in None case";
           let%bind mem = malloc ~mallocLoc:MallocDevice type' "map-mem" in
           createTargetAddrMapArgs type' (Some (TargetValue mem))
         | Some (TargetValue targetValue) ->
-          Stdio.prerr_endline "Create target addr map args in Some case";
           let elementType =
             guillotineType ~expectedSize:(convertShapeElement frameShape)
             @@ Mem.type' targetValue
@@ -1309,7 +1342,6 @@ let rec allocRequest
           , [ Expr.{ memBinding = binding; mem = targetValue } ]
           , targetValue )
         | Some (TargetValues targetValues) ->
-          Stdio.prerr_endline "Create target addr map args in Some values case";
           let elementTypes = typeAsTuple type' in
           let%map targets, memArgs, mapMems =
             List.zip_exn elementTypes targetValues
