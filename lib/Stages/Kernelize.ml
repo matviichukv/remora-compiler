@@ -5,25 +5,6 @@ module Type = Corn.Type
 type host = Corn.Expr.host [@@deriving sexp_of]
 type device = Corn.Expr.device [@@deriving sexp_of]
 
-(* module KernelizeState = struct *)
-(*   include State *)
-
-(*   type state = CompilerState.state *)
-(*   type ('a, 'e) u = (state, 'a, 'e) t *)
-
-(*   let getDeviceInfo () = get () >>| fun (s : state) -> s.deviceInfo *)
-
-(*   let createId name = *)
-(*     make ~f:(fun state -> *)
-(*       State.run *)
-(*         (Identifier.create *)
-(*            name *)
-(*            ~getCounter:(fun (s : state) -> s.idCounter) *)
-(*            ~setCounter:(fun (s : state) idCounter -> { s with idCounter })) *)
-(*         state) *)
-(*   ;; *)
-(* end *)
-
 module ParallelismShape = struct
   (** Describes the shape of parallelism in an expression. *)
   type t =
@@ -159,609 +140,6 @@ module ParallelismWorthwhileness = struct
   ;;
 end
 
-(* let getThreads *)
-(*   (_ : DeviceInfo.t) *)
-(*   (consumer : (host, device, Corn.Expr.parallel) Corn.Expr.consumerOp option) *)
-(*   = *)
-(*   match consumer with *)
-(*   | None | Some (Scatter _) -> 256 *)
-(*   | Some (ReducePar _) -> 32 *)
-(*   | Some (ScanPar _) -> 256 *)
-(* ;; *)
-
-(* let getBlocks ~threads:threadsPerBlock ~parShape deviceInfo = *)
-(*   let blocksToReachThreads threads = (threads + threadsPerBlock - 1) / threadsPerBlock in *)
-(*   let maxBlocks = blocksToReachThreads (DeviceInfo.maxThreads deviceInfo) in *)
-(*   match ParallelismShape.known parShape with *)
-(*   | Some parShape -> Int.min (blocksToReachThreads parShape) maxBlocks *)
-(*   | None -> maxBlocks *)
-(* ;; *)
-
-(* let decideParallelism ~par:(parExpr, parParShape) ~seq:(seqExpr, seqParShape) = *)
-(*   let open KernelizeState.Let_syntax in *)
-(*   let%map deviceInfo = KernelizeState.getDeviceInfo () in *)
-(*   let type' = Corn.Expr.type' parExpr in *)
-(*   match *)
-(*     ( ParallelismWorthwhileness.get deviceInfo parParShape *)
-(*     , ParallelismWorthwhileness.get deviceInfo seqParShape ) *)
-(*   with *)
-(*   | Saturating, _ *)
-(*   | Worthwhile { bound = _ }, NotWorthwhile { bound = Some _ } *)
-(*   | Worthwhile { bound = Some _ }, NotWorthwhile { bound = None } -> parExpr, parParShape *)
-(*   | NotWorthwhile { bound = Some _ }, _ | _, Saturating -> seqExpr, seqParShape *)
-(*   | Worthwhile { bound = Some parBound }, Worthwhile { bound = Some seqBound } -> *)
-(*     if parBound >= seqBound then parExpr, parParShape else seqExpr, seqParShape *)
-(*   | NotWorthwhile { bound = None }, NotWorthwhile { bound = Some _ } -> *)
-(*     ( Corn.Expr.IfParallelismHitsCutoff *)
-(*         { parallelism = ParallelismShape.toCorn parParShape *)
-(*         ; cutoff = ParallelismWorthwhileness.worthwhileParallelismCutoff deviceInfo *)
-(*         ; then' = parExpr *)
-(*         ; else' = seqExpr *)
-(*         ; type' *)
-(*         } *)
-(*     , parParShape ) *)
-(*   | Worthwhile { bound = Some parBound }, Worthwhile { bound = None } -> *)
-(*     if parBound >= ParallelismShape.parallelismFloor seqParShape *)
-(*     then parExpr, parParShape *)
-(*     else seqExpr, seqParShape *)
-(*   | ( (Worthwhile { bound = None } | NotWorthwhile { bound = None }) *)
-(*     , (Worthwhile { bound = _ } | NotWorthwhile { bound = None }) ) -> *)
-(*     ( Corn.Expr.IfParallelismHitsCutoff *)
-(*         { parallelism = ParallelismShape.toCorn parParShape *)
-(*         ; cutoff = ParallelismShape.parallelismFloor seqParShape *)
-(*         ; then' = parExpr *)
-(*         ; else' = seqExpr *)
-(*         ; type' *)
-(*         } *)
-(*     , ParallelismShape.max [ parParShape; seqParShape ] ) *)
-(* ;; *)
-
-(* let rec getOpts (expr : Nested.t) : (compilationOptions, _) KernelizeState.u = *)
-(*   let open KernelizeState.Let_syntax in *)
-(*   let open Corn in *)
-(*   match expr with *)
-(*   | Ref ref -> *)
-(*     return *)
-(*     @@ compilationOptions *)
-(*          ~hostExpr:(Ref ref) *)
-(*          ~deviceExpr:(Ref ref) *)
-(*          ~hostParShape:(Known 1) *)
-(*   | Frame { elements; dimension; type' } -> *)
-(*     let%map hostElements, deviceElements, hostParShape, _, _ = getOptsList elements in *)
-(*     compilationOptions *)
-(*       ~hostExpr:(Frame { elements = hostElements; dimension; type' }) *)
-(*       ~deviceExpr:(Frame { elements = deviceElements; dimension; type' }) *)
-(*       ~hostParShape *)
-(*   | BoxValue { box; type' } -> *)
-(*     let%map boxOpts = getOpts box in *)
-(*     compilationOptions *)
-(*       ~hostExpr:(BoxValue { box = boxOpts.hostExpr; type' }) *)
-(*       ~deviceExpr:(BoxValue { box = boxOpts.deviceExpr; type' }) *)
-(*       ~hostParShape:boxOpts.hostParShape *)
-(*   | IndexLet { indexArgs; body; type' } -> *)
-(*     let%map indexArgsHostExprs, indexArgsDeviceExprs, indexArgsHostParShapes = *)
-(*       indexArgs *)
-(*       |> List.map ~f:(fun { indexBinding; indexValue; sort } -> *)
-(*         let%map indexValueHostExpr, indexValueDeviceExpr, indexValueHostParShape = *)
-(*           match indexValue with *)
-(*           | Runtime value -> *)
-(*             let%map valueOpts = getOpts value in *)
-(*             ( Expr.Runtime valueOpts.hostExpr *)
-(*             , Expr.Runtime valueOpts.deviceExpr *)
-(*             , valueOpts.hostParShape ) *)
-(*           | FromBox { box; i } -> *)
-(*             let%map boxOpts = getOpts box in *)
-(*             ( Expr.FromBox { box = boxOpts.hostExpr; i } *)
-(*             , Expr.FromBox { box = boxOpts.deviceExpr; i } *)
-(*             , boxOpts.hostParShape ) *)
-(*         in *)
-(*         ( Expr.{ indexBinding; indexValue = indexValueHostExpr; sort } *)
-(*         , Expr.{ indexBinding; indexValue = indexValueDeviceExpr; sort } *)
-(*         , indexValueHostParShape )) *)
-(*       |> KernelizeState.all *)
-(*       >>| List.unzip3 *)
-(*     and bodyOpts = getOpts body in *)
-(*     let indexArgsHostParShape = ParallelismShape.max indexArgsHostParShapes in *)
-(*     compilationOptions *)
-(*       ~hostExpr: *)
-(*         (IndexLet { indexArgs = indexArgsHostExprs; body = bodyOpts.hostExpr; type' }) *)
-(*       ~deviceExpr: *)
-(*         (IndexLet { indexArgs = indexArgsDeviceExprs; body = bodyOpts.deviceExpr; type' }) *)
-(*       ~hostParShape: *)
-(*         (ParallelismShape.max [ indexArgsHostParShape; bodyOpts.hostParShape ]) *)
-(*   | ReifyIndex reifyIndex -> *)
-(*     return *)
-(*     @@ compilationOptions *)
-(*          ~hostExpr:(ReifyIndex reifyIndex) *)
-(*          ~deviceExpr:(ReifyIndex reifyIndex) *)
-(*          ~hostParShape:ParallelismShape.empty *)
-(*   | ShapeProd shape -> *)
-(*     return *)
-(*     @@ compilationOptions *)
-(*          ~hostExpr:(ShapeProd shape) *)
-(*          ~deviceExpr:(ShapeProd shape) *)
-(*          ~hostParShape:ParallelismShape.empty *)
-(*   | Let { args; body; type' } -> *)
-(*     let%map argsHost, argsDevice, argsHostParShapes = *)
-(*       args *)
-(*       |> List.map ~f:(fun { binding; value } -> *)
-(*         let%map valueOpts = getOpts value in *)
-(*         ( Expr.{ binding; value = valueOpts.hostExpr } *)
-(*         , Expr.{ binding; value = valueOpts.deviceExpr } *)
-(*         , valueOpts.hostParShape )) *)
-(*       |> KernelizeState.all *)
-(*       >>| List.unzip3 *)
-(*     and bodyOpts = getOpts body in *)
-(*     let argsHostParShape = ParallelismShape.max argsHostParShapes in *)
-(*     compilationOptions *)
-(*       ~hostExpr:(Let { args = argsHost; body = bodyOpts.hostExpr; type' }) *)
-(*       ~deviceExpr:(Let { args = argsDevice; body = bodyOpts.deviceExpr; type' }) *)
-(*       ~hostParShape:(ParallelismShape.max [ argsHostParShape; bodyOpts.hostParShape ]) *)
-(*   | LoopBlock *)
-(*       { frameShape *)
-(*       ; label = _ *)
-(*       ; mapArgs *)
-(*       ; mapIotas *)
-(*       ; mapBody *)
-(*       ; mapBodyMatcher *)
-(*       ; mapResults *)
-(*       ; consumer = None *)
-(*       ; type' *)
-(*       } -> *)
-(*     let%bind mapBodyOpts = getOpts mapBody in *)
-(*     let mapAsKernel : Expr.mapKernel = *)
-(*       { frameShape *)
-(*       ; mapArgs *)
-(*       ; mapIotas *)
-(*       ; mapBody = mapBodyOpts.flattenedMapBody *)
-(*       ; mapBodyMatcher *)
-(*       ; mapResults *)
-(*       ; type' = List.nth_exn type' 0 *)
-(*       } *)
-(*     in *)
-(*     let mapAsKernelParShape = *)
-(*       ParallelismShape.nestParallelism frameShape mapBodyOpts.flattenedMapBodyParShape *)
-(*     in *)
-(*     let mapAsHostExpr = *)
-(*       Expr.LoopBlock *)
-(*         { frameShape *)
-(*         ; mapArgs *)
-(*         ; mapIotas *)
-(*         ; mapBody = mapBodyOpts.hostExpr *)
-(*         ; mapBodyMatcher *)
-(*         ; mapResults *)
-(*         ; consumer = Nothing *)
-(*         ; indexMode = None *)
-(*         ; type' *)
-(*         } *)
-(*     in *)
-(*     (\* let%bind deviceInfo = KernelizeState.getDeviceInfo () in *)
-(*        let threads = getThreads deviceInfo None in *)
-(*        let blocks = getBlocks ~threads ~parShape:mapAsKernelParShape deviceInfo in *\) *)
-(*     let%map hostExpr, hostParShape = *)
-(*       decideParallelism *)
-(*         ~par:(mapAsHostExpr, mapBodyOpts.hostParShape) *)
-(*           (\* ( Expr.values *)
-(*              [ Expr.MapKernel { kernel = mapAsKernel; blocks; threads }; Expr.values [] ] *)
-(*              , mapAsKernelParShape ) *\) *)
-(*         ~seq:(mapAsHostExpr, mapBodyOpts.hostParShape) *)
-(*     in *)
-(*     { hostExpr *)
-(*     ; deviceExpr = *)
-(*         LoopBlock *)
-(*           { frameShape *)
-(*           ; mapArgs *)
-(*           ; mapIotas *)
-(*           ; mapBody = mapBodyOpts.deviceExpr *)
-(*           ; mapBodyMatcher *)
-(*           ; mapResults *)
-(*           ; consumer = Nothing *)
-(*           ; indexMode = None *)
-(*           ; type' *)
-(*           } *)
-(*     ; hostParShape *)
-(*     ; flattenedMapBody = *)
-(*         MapBodySubMap (MapBodyValues [ MapBodyMap mapAsKernel; MapBodyValues [] ]) *)
-(*     ; flattenedMapBodyParShape = mapAsKernelParShape *)
-(*     } *)
-(*   | LoopBlock *)
-(*       { frameShape *)
-(*       ; mapArgs *)
-(*       ; mapIotas *)
-(*       ; mapBody *)
-(*       ; mapBodyMatcher *)
-(*       ; mapResults *)
-(*       ; consumer = Some consumer *)
-(*       ; label = _ *)
-(*       ; type' *)
-(*       } -> *)
-(*     let%bind consumerAsHostExpr, consumerAsDeviceExpr, consumerAsHostParShape, parConsumer *)
-(*       = *)
-(*       match consumer with *)
-(*       | Reduce { arg; zero; body; d; character; type' } -> *)
-(*         let makeSeq ~(character : Nested.Expr.reduceCharacter) reduceLike = *)
-(*           match character with *)
-(*           | Reduce -> Expr.ReduceSeq reduceLike *)
-(*           | Scan -> Expr.ScanSeq reduceLike *)
-(*         in *)
-(*         let makePar ~(character : Nested.Expr.reduceCharacter) ~outerBody reduceLike = *)
-(*           match character with *)
-(*           | Reduce -> Expr.ReducePar { reduce = reduceLike; outerBody } *)
-(*           | Scan -> Expr.ScanPar reduceLike *)
-(*         in *)
-(*         let%map zeroOpts = getOpts zero *)
-(*         and bodyOpts = getOpts body in *)
-(*         let zeroOptsHostParShape = hostParShape zeroOpts in *)
-(*         ( makeSeq *)
-(*             ~character *)
-(*             { arg; zero = hostExpr zeroOpts; body = bodyOpts.hostExpr; d; type' } *)
-(*         , makeSeq *)
-(*             ~character *)
-(*             { arg; zero = deviceExpr zeroOpts; body = bodyOpts.deviceExpr; d; type' } *)
-(*         , ParallelismShape.max [ bodyOpts.hostParShape; zeroOptsHostParShape ] *)
-(*         , Some *)
-(*             ( makePar *)
-(*                 ~character *)
-(*                 ~outerBody:bodyOpts.hostExpr *)
-(*                 { arg; zero = hostExpr zeroOpts; body = bodyOpts.deviceExpr; d; type' } *)
-(*             , ParallelismShape.max *)
-(*                 [ ParallelismShape.singleDimensionParallelism (Add d) *)
-(*                 ; zeroOptsHostParShape *)
-(*                 ] ) ) *)
-(*       | Fold { zeroArg; arrayArgs; body; reverse; d; character; type' } -> *)
-(*         let%map bodyOpts = getOpts body *)
-(*         and zeroArgValueOpts = getOpts zeroArg.zeroValue in *)
-(*         ( Expr.Fold *)
-(*             { zeroArg = *)
-(*                 { zeroBinding = zeroArg.zeroBinding *)
-(*                 ; zeroValue = zeroArgValueOpts.hostExpr *)
-(*                 } *)
-(*             ; arrayArgs *)
-(*             ; body = bodyOpts.hostExpr *)
-(*             ; reverse *)
-(*             ; d *)
-(*             ; character *)
-(*             ; type' *)
-(*             } *)
-(*         , Expr.Fold *)
-(*             { zeroArg = *)
-(*                 { zeroBinding = zeroArg.zeroBinding *)
-(*                 ; zeroValue = zeroArgValueOpts.deviceExpr *)
-(*                 } *)
-(*             ; arrayArgs *)
-(*             ; body = bodyOpts.deviceExpr *)
-(*             ; reverse *)
-(*             ; d *)
-(*             ; character *)
-(*             ; type' *)
-(*             } *)
-(*         , ParallelismShape.max [ bodyOpts.hostParShape; zeroArgValueOpts.hostParShape ] *)
-(*         , None ) *)
-(*       | Scatter { valuesArg; indicesArg; dIn; dOut; type' } -> *)
-(*         let scatter = Expr.Scatter { valuesArg; indicesArg; dIn; dOut; type' } in *)
-(*         return *)
-(*           ( scatter *)
-(*           , scatter *)
-(*           , ParallelismShape.empty *)
-(*           , Some (scatter, ParallelismShape.singleDimensionParallelism (Add dIn)) ) *)
-(*     and mapBodyOpts = getOpts mapBody in *)
-(*     let sequentialBlockParShape = *)
-(*       ParallelismShape.max [ mapBodyOpts.hostParShape; consumerAsHostParShape ] *)
-(*     in *)
-(*     let%map hostExpr, hostParShape = *)
-(*       match parConsumer with *)
-(*       | Some _ -> *)
-(*         (\* | Some (parConsumerExpr, parConsumerParShape) -> *\) *)
-(*         let%bind _ = KernelizeState.getDeviceInfo () in *)
-(*         (\* let threads = getThreads deviceInfo (Some parConsumerExpr) in *\) *)
-(*         (\* let blocks = getBlocks ~threads ~parShape:parConsumerParShape deviceInfo in *\) *)
-(*         decideParallelism *)
-(*           ~par: *)
-(*             ( Expr.LoopBlock *)
-(*                 { frameShape *)
-(*                 ; mapArgs *)
-(*                 ; mapIotas *)
-(*                 ; mapBody = mapBodyOpts.hostExpr *)
-(*                 ; mapBodyMatcher *)
-(*                 ; mapResults *)
-(*                 ; consumer = Just consumerAsHostExpr *)
-(*                 ; indexMode = None *)
-(*                 ; type' *)
-(*                 } *)
-(*             , sequentialBlockParShape ) *)
-(*             (\* ( Expr.LoopKernel *)
-(*                 { kernel = *)
-(*                     { frameShape *)
-(*                     ; mapArgs *)
-(*                     ; mapIotas *)
-(*                     ; mapBody = mapBodyOpts.deviceExpr *)
-(*                     ; mapBodyMatcher *)
-(*                     ; mapResults *)
-(*                     ; consumer = Just parConsumerExpr *)
-(*                     ; type' *)
-(*                     } *)
-(*                 ; blocks *)
-(*                 ; threads *)
-(*                 } *)
-(*             , parConsumerParShape ) *\) *)
-(*           ~seq: *)
-(*             ( Expr.LoopBlock *)
-(*                 { frameShape *)
-(*                 ; mapArgs *)
-(*                 ; mapIotas *)
-(*                 ; mapBody = mapBodyOpts.hostExpr *)
-(*                 ; mapBodyMatcher *)
-(*                 ; mapResults *)
-(*                 ; consumer = Just consumerAsHostExpr *)
-(*                 ; indexMode = None *)
-(*                 ; type' *)
-(*                 } *)
-(*             , sequentialBlockParShape ) *)
-(*       | None -> *)
-(*         (\* TODO: might be a good idea to unfuse and parallelize just the map *\) *)
-(*         return *)
-(*           ( Expr.LoopBlock *)
-(*               { frameShape *)
-(*               ; mapArgs *)
-(*               ; mapIotas *)
-(*               ; mapBody = mapBodyOpts.hostExpr *)
-(*               ; mapBodyMatcher *)
-(*               ; mapResults *)
-(*               ; consumer = Just consumerAsHostExpr *)
-(*               ; indexMode = None *)
-(*               ; type' *)
-(*               } *)
-(*           , sequentialBlockParShape ) *)
-(*     in *)
-(*     let opts = *)
-(*       compilationOptions *)
-(*         ~hostExpr *)
-(*         ~deviceExpr: *)
-(*           (LoopBlock *)
-(*              { frameShape *)
-(*              ; mapArgs *)
-(*              ; mapIotas *)
-(*              ; mapBody = mapBodyOpts.deviceExpr *)
-(*              ; mapBodyMatcher *)
-(*              ; mapResults *)
-(*              ; consumer = Just consumerAsDeviceExpr *)
-(*              ; indexMode = None *)
-(*              ; type' *)
-(*              }) *)
-(*         ~hostParShape *)
-(*     in *)
-(*     opts *)
-(*   | Box { indices; body; bodyType; type' } -> *)
-(*     let%map bodyOpts = getOpts body in *)
-(*     compilationOptions *)
-(*       ~hostExpr:(Box { indices; body = bodyOpts.hostExpr; bodyType; type' }) *)
-(*       ~deviceExpr:(Box { indices; body = bodyOpts.deviceExpr; bodyType; type' }) *)
-(*       ~hostParShape:bodyOpts.hostParShape *)
-(*   | Literal literal -> *)
-(*     return *)
-(*     @@ compilationOptions *)
-(*          ~hostExpr:(Literal literal) *)
-(*          ~deviceExpr:(Literal literal) *)
-(*          ~hostParShape:ParallelismShape.empty *)
-(*   | Values { elements; type' } -> *)
-(*     let%map ( elementsHostExprs *)
-(*             , elementsDeviceExprs *)
-(*             , elementsHostParShape *)
-(*             , elementsFlattenedMapBodies *)
-(*             , elementsFlattenedMapBodiesParShape ) *)
-(*       = *)
-(*       getOptsList elements *)
-(*     in *)
-(*     let deviceExpr = Expr.Values { elements = elementsDeviceExprs; type' } in *)
-(*     let list_all_opt l = *)
-(*       let filtered = List.filter_opt l in *)
-(*       if List.length l = List.length filtered then Some filtered else None *)
-(*     in *)
-(*     let elementsFlattenedMapBodiesAsSubMaps = *)
-(*       elementsFlattenedMapBodies *)
-(*       |> List.map ~f:(function *)
-(*         | Expr.MapBodyExpr _ -> None *)
-(*         | Expr.MapBodySubMap subMap -> Some subMap) *)
-(*       |> list_all_opt *)
-(*     in *)
-(*     let flattenedMapBody, flattenedMapBodyParShape = *)
-(*       match elementsFlattenedMapBodiesAsSubMaps with *)
-(*       | Some elementsFlattenedMapBodies -> *)
-(*         ( Expr.MapBodySubMap (MapBodyValues elementsFlattenedMapBodies) *)
-(*         , elementsFlattenedMapBodiesParShape ) *)
-(*       | None -> Expr.MapBodyExpr deviceExpr, ParallelismShape.empty *)
-(*     in *)
-(*     { hostExpr = Values { elements = elementsHostExprs; type' } *)
-(*     ; deviceExpr *)
-(*     ; hostParShape = elementsHostParShape *)
-(*     ; flattenedMapBody *)
-(*     ; flattenedMapBodyParShape *)
-(*     } *)
-(*   | ScalarPrimitive { op; args; type' } -> *)
-(*     let%map argsHostExprs, argsDeviceExprs, argsHostParShape, _, _ = getOptsList args in *)
-(*     compilationOptions *)
-(*       ~hostExpr:(ScalarPrimitive { op; args = argsHostExprs; type' }) *)
-(*       ~deviceExpr:(ScalarPrimitive { op; args = argsDeviceExprs; type' }) *)
-(*       ~hostParShape:argsHostParShape *)
-(*   | TupleDeref { tuple; index; type' } -> *)
-(*     let%map tupleOpts = getOpts tuple in *)
-(*     let hostExpr = *)
-(*       match tupleOpts.hostExpr with *)
-(*       | Values { elements; type' = _ } -> List.nth_exn elements index *)
-(*       | tuple -> TupleDeref { tuple; index; type' } *)
-(*     in *)
-(*     let deviceExpr = *)
-(*       match tupleOpts.deviceExpr with *)
-(*       | Values { elements; type' = _ } -> List.nth_exn elements index *)
-(*       | tuple -> TupleDeref { tuple; index; type' } *)
-(*     in *)
-(*     let flattenedMapBody, flattenedMapBodyParShape = *)
-(*       match tupleOpts.flattenedMapBody with *)
-(*       | MapBodyExpr _ -> Expr.MapBodyExpr deviceExpr, ParallelismShape.empty *)
-(*       | MapBodySubMap (MapBodyValues values) -> *)
-(*         Expr.MapBodySubMap (List.nth_exn values index), tupleOpts.flattenedMapBodyParShape *)
-(*       | MapBodySubMap subMaps -> *)
-(*         ( Expr.MapBodySubMap (MapBodyDeref { tuple = subMaps; index }) *)
-(*         , tupleOpts.flattenedMapBodyParShape ) *)
-(*     in *)
-(*     { hostExpr *)
-(*     ; deviceExpr *)
-(*     ; hostParShape = tupleOpts.hostParShape *)
-(*     ; flattenedMapBody *)
-(*     ; flattenedMapBodyParShape *)
-(*     } *)
-(*   | ContiguousSubArray { arrayArg; indexArg; originalShape; resultShape; type' } -> *)
-(*     let%map arrayArgOpts = getOpts arrayArg *)
-(*     and indexArgOpts = getOpts indexArg in *)
-(*     compilationOptions *)
-(*       ~hostExpr: *)
-(*         (ContiguousSubArray *)
-(*            { arrayArg = arrayArgOpts.hostExpr *)
-(*            ; indexArg = indexArgOpts.hostExpr *)
-(*            ; originalShape *)
-(*            ; resultShape *)
-(*            ; type' *)
-(*            }) *)
-(*       ~deviceExpr: *)
-(*         (ContiguousSubArray *)
-(*            { arrayArg = arrayArgOpts.deviceExpr *)
-(*            ; indexArg = indexArgOpts.deviceExpr *)
-(*            ; originalShape *)
-(*            ; resultShape *)
-(*            ; type' *)
-(*            }) *)
-(*       ~hostParShape: *)
-(*         (ParallelismShape.max [ arrayArgOpts.hostParShape; indexArgOpts.hostParShape ]) *)
-(*   | Append { args; type' } -> *)
-(*     let%map argsHostExprs, argsDeviceExprs, argsHostParShape, _, _ = getOptsList args in *)
-(*     compilationOptions *)
-(*       ~hostExpr:(Append { args = argsHostExprs; type' }) *)
-(*       ~deviceExpr:(Append { args = argsDeviceExprs; type' }) *)
-(*       ~hostParShape:argsHostParShape *)
-(*   | Zip { zipArg; nestCount; type' } -> *)
-(*     let%map zipArgOpts = getOpts zipArg in *)
-(*     compilationOptions *)
-(*       ~hostExpr:(Zip { zipArg = zipArgOpts.hostExpr; nestCount; type' }) *)
-(*       ~deviceExpr:(Zip { zipArg = zipArgOpts.deviceExpr; nestCount; type' }) *)
-(*       ~hostParShape:zipArgOpts.hostParShape *)
-(*   | Unzip { unzipArg; type' } -> *)
-(*     let%map unzipArgOpts = getOpts unzipArg in *)
-(*     compilationOptions *)
-(*       ~hostExpr:(Unzip { unzipArg = unzipArgOpts.hostExpr; type' }) *)
-(*       ~deviceExpr:(Unzip { unzipArg = unzipArgOpts.deviceExpr; type' }) *)
-(*       ~hostParShape:unzipArgOpts.hostParShape *)
-
-(* and getOptsList exprs = *)
-(*   let open KernelizeState.Let_syntax in *)
-(*   let%map optss = exprs |> List.map ~f:getOpts |> KernelizeState.all in *)
-(*   let hostExprs = List.map optss ~f:hostExpr in *)
-(*   let deviceExprs = List.map optss ~f:deviceExpr in *)
-(*   let hostParShapes = List.map optss ~f:hostParShape in *)
-(*   let flattenedMapBodies = List.map optss ~f:(fun o -> o.flattenedMapBody) in *)
-(*   let flattenedMapBodiesParShape = *)
-(*     List.map optss ~f:(fun o -> o.flattenedMapBodyParShape) *)
-(*   in *)
-(*   ( hostExprs *)
-(*   , deviceExprs *)
-(*   , ParallelismShape.max hostParShapes *)
-(*   , flattenedMapBodies *)
-(*   , ParallelismShape.max flattenedMapBodiesParShape ) *)
-(* ;; *)
-
-type loopStructureTree =
-  | Leaf
-  (* needs multiple children like frame or values but not an actual loop *)
-  | Split : { children : loopStructureTree list } -> loopStructureTree
-  | LoopNode :
-      { children : loopStructureTree list
-      ; frameShape : Index.shapeElement
-      ; label : Identifier.t
-      }
-      -> loopStructureTree
-[@@deriving sexp_of]
-
-let split children : loopStructureTree =
-  match children with
-  | [] -> Leaf
-  | [ node ] -> node
-  | _ -> Split { children }
-;;
-
-let rec extractLoopStructure (expr : Nested.t) : loopStructureTree =
-  match expr with
-  | Literal _ -> Leaf
-  | ScalarPrimitive _ -> Leaf
-  | Ref _ -> Leaf
-  | Frame { elements; dimension = _; type' = _ } ->
-    let children = extractLoopStructureList elements in
-    split children
-  | BoxValue bv -> extractLoopStructure bv.box
-  | IndexLet { indexArgs; body; type' = _ } ->
-    let tArgs =
-      List.map
-        ~f:(fun { indexValue; indexBinding = _; sort = _ } ->
-          match indexValue with
-          | Runtime t -> t
-          | FromBox { box; i = _ } -> box)
-        indexArgs
-    in
-    let children = extractLoopStructureList (body :: tArgs) in
-    split children
-  | ReifyIndex _ -> Leaf
-  | ShapeProd _ -> Leaf
-  | Let { args; body; type' = _ } ->
-    let args = List.map ~f:(fun { binding = _; value } -> value) args in
-    let children = extractLoopStructureList (body :: args) in
-    split children
-  | LoopBlock lb ->
-    let mapBodyChild = extractLoopStructure lb.mapBody in
-    let consumerChild = extractLoopStructureConsumerHelper lb.consumer in
-    let children =
-      List.filter
-        ~f:(fun c ->
-          match c with
-          | Leaf -> false
-          | Split _ -> true
-          | LoopNode _ -> true)
-        [ mapBodyChild; consumerChild ]
-    in
-    LoopNode { children; frameShape = lb.frameShape; label = lb.label }
-  | Box b -> extractLoopStructure b.body
-  | Values { elements; type' = _ } ->
-    let children = extractLoopStructureList elements in
-    split children
-  | TupleDeref { tuple; index = _; type' = _ } -> extractLoopStructure tuple
-  | ContiguousSubArray
-      { arrayArg; indexArg; originalShape = _; resultShape = _; type' = _ } ->
-    let children = extractLoopStructureList [ arrayArg; indexArg ] in
-    split children
-  | Append { args; type' = _ } ->
-    let children = extractLoopStructureList args in
-    Split { children }
-  | Zip { zipArg; nestCount = _; type' = _ } -> extractLoopStructure zipArg
-  | Unzip { unzipArg; type' = _ } -> extractLoopStructure unzipArg
-
-and extractLoopStructureConsumerHelper (consumer : Nested.Expr.consumerOp option)
-  : loopStructureTree
-  =
-  let open Nested.Expr in
-  match consumer with
-  | None -> Leaf
-  | Some consumer ->
-    (match consumer with
-     | Reduce { zero; body; arg = _; d = _; character = _; type' = _ } ->
-       split (extractLoopStructureList [ zero; body ])
-     | Fold { zeroArg; arrayArgs = _; body; reverse = _; d = _; character = _; type' = _ }
-       -> split (extractLoopStructureList [ zeroArg.zeroValue; body ])
-     | Scatter { valuesArg = _; indicesArg = _; dIn = _; dOut = _; type' = _ } -> Leaf)
-
-and extractLoopStructureList (elements : Nested.t list) : loopStructureTree list =
-  List.filter_map elements ~f:(fun e ->
-    match extractLoopStructure e with
-    | Leaf -> None
-    | rest -> Some rest)
-;;
-
 let rec getIterationSpace (expr : Nested.t) : int =
   match expr with
   | Literal _ -> 1
@@ -822,174 +200,14 @@ and getIterationSpaceConsumer consumer : int =
   | Some (Scatter s) -> Int.max (getSizeFromDim s.dOut) (getSizeFromDim s.dIn)
 ;;
 
-(* TODO: maybe worth it to also count how many seq instructions are done in different parallel modes, maybe
-   (* sometimes it's worth it to have multiple kernels vs a single larger one *)
-let rec tryToParallelize (expr : Nested.t) (structureMap : IndexingModeDrafting.cuda_t)
-  : Nested.t * IndexingModeDrafting.cuda_t * IndexingModeDrafting.index_cuda_t list option
-  =
-  match expr with
-  | Literal lit -> Literal lit, structureMap, None
-  | ScalarPrimitive prim -> ScalarPrimitive prim, structureMap, None
-  | Ref ref -> Ref ref, structureMap, None
-  | Frame { elements; dimension; type' } ->
-    let elements, newMapStructure, index = tryToParallelizeList elements structureMap in
-    Frame { elements; dimension; type' }, newMapStructure, index
-  | BoxValue { box; type' } ->
-    let newBox, newMapStructure, index = tryToParallelize box structureMap in
-    BoxValue { box = newBox; type' }, newMapStructure, index
-  | IndexLet { indexArgs; body; type' } ->
-    let tArgs =
-      List.map
-        ~f:(fun { indexValue; indexBinding = _; sort = _ } ->
-          match indexValue with
-          | Runtime t -> t
-          | FromBox { box; i = _ } -> box)
-        indexArgs
-    in
-    let result, newStructureMap, index =
-      tryToParallelizeList (body :: tArgs) structureMap
-    in
-    let newBody = List.hd_exn result in
-    let newTArgs = List.tl_exn result in
-    let newArgs =
-      List.map2_exn
-        indexArgs
-        newTArgs
-        ~f:(fun { indexValue; indexBinding; sort } newIndexValue ->
-          let open Nested.Expr in
-          let newIndexValue =
-            match indexValue with
-            | Runtime _ -> Runtime newIndexValue
-            | FromBox { box = _; i } -> FromBox { box = newIndexValue; i }
-          in
-          { indexValue = newIndexValue; indexBinding; sort })
-    in
-    IndexLet { indexArgs = newArgs; body = newBody; type' }, newStructureMap, index
-  | ReifyIndex ri -> ReifyIndex ri, structureMap, None
-  | ShapeProd sp -> ShapeProd sp, structureMap, None
-  | Let { args; body; type' } ->
-    let argValues = List.map ~f:(fun { binding = _; value } -> value) args in
-    let result, newStructureMap, index =
-      tryToParallelizeList (body :: argValues) structureMap
-    in
-    let newBody = List.hd_exn result in
-    let newArgsValues = List.tl_exn result in
-    let newArgs =
-      List.map2_exn args newArgsValues ~f:(fun { binding; value = _ } value ->
-        Nested.Expr.{ binding; value })
-    in
-    Let { args = newArgs; body = newBody; type' }, newStructureMap, index
-  | LoopBlock lb ->
-    let _, innerStructureMap, bodyIndex = tryToParallelize lb.mapBody structureMap in
-    let result =
-      IndexingModeDrafting.ParallelizationStructureCUDA.tryToParallelize
-        innerStructureMap
-        lb
-    in
-    (* Stdio.print_endline
-       (Printf.sprintf
-       "Dealing with loopblock: \n%s"
-       (Sexp.to_string_hum ([%sexp_of: Nested.Expr.loopBlock] lb))); *)
-    (match result with
-     | None -> Stdio.print_endline "Did not par loopblock"
-     | Some (structure, indexThing) ->
-       Stdio.print_endline
-         (Printf.sprintf
-            "Par loop block map: \nStructure: \n%s\nIndex:\n%s"
-            (Sexp.to_string_hum ([%sexp_of: IndexingModeDrafting.cuda_t] structure))
-            (Sexp.to_string_hum
-               ([%sexp_of: IndexingModeDrafting.ParallelizationStructureCUDA.indexMode]
-                  indexThing))));
-    let mergeWithBodyIndex index =
-      match bodyIndex with
-      | None -> [ index ]
-      | Some bodyIndex -> index :: bodyIndex
-    in
-    (match result with
-     | None -> LoopBlock lb, structureMap, None
-     | Some (structure, index) ->
-       let mergedIndex = mergeWithBodyIndex index in
-       let structureMap =
-         IndexingModeDrafting.updateStructureWithIndexMode structure index
-       in
-       LoopBlock lb, structureMap, Some mergedIndex)
-  | Box { indices; body; bodyType; type' } ->
-    let newBody, newStructureMap, index = tryToParallelize body structureMap in
-    Box { body = newBody; indices; bodyType; type' }, newStructureMap, index
-  | Values { elements; type' } ->
-    let newElements, newStructureMap, index =
-      tryToParallelizeList elements structureMap
-    in
-    Values { elements = newElements; type' }, newStructureMap, index
-  | TupleDeref { tuple; index; type' } ->
-    let newTuple, newStructureMap, index_loop = tryToParallelize tuple structureMap in
-    TupleDeref { tuple = newTuple; index; type' }, newStructureMap, index_loop
-  | ContiguousSubArray { arrayArg; indexArg; originalShape; resultShape; type' } ->
-    let argResult, newStructureMap, index =
-      tryToParallelizeList [ arrayArg; indexArg ] structureMap
-    in
-    let newArrayArg = List.nth_exn argResult 0 in
-    let newIndexArg = List.nth_exn argResult 1 in
-    ( ContiguousSubArray
-        { arrayArg = newArrayArg
-        ; indexArg = newIndexArg
-        ; originalShape
-        ; resultShape
-        ; type'
-        }
-    , newStructureMap
-    , index )
-  | Append { args; type' } ->
-    let newArgs, newStructureMap, index = tryToParallelizeList args structureMap in
-    Append { args = newArgs; type' }, newStructureMap, index
-  | Zip { zipArg; nestCount; type' } ->
-    let newZipArg, newStructureMap, index = tryToParallelize zipArg structureMap in
-    Zip { zipArg = newZipArg; nestCount; type' }, newStructureMap, index
-  | Unzip { unzipArg; type' } ->
-    let newUnzipArg, newStructureMap, index = tryToParallelize unzipArg structureMap in
-    Unzip { unzipArg = newUnzipArg; type' }, newStructureMap, index
-
-and tryToParallelizeList
-  (elements : Nested.t list)
-  (structureMap : IndexingModeDrafting.cuda_t)
-  : Nested.t list
-    * IndexingModeDrafting.cuda_t
-    * IndexingModeDrafting.index_cuda_t list option
-  =
-  match elements with
-  | [] -> elements, structureMap, None
-  | hd :: tl ->
-    let _, _, index = tryToParallelize hd structureMap in
-    let index =
-      List.fold tl ~init:index ~f:(fun indexAcc e ->
-        let _, _, index = tryToParallelize e structureMap in
-        match index, indexAcc with
-        | None, None -> None
-        | Some i, None | None, Some i -> Some i
-        | Some i1, Some i2 -> Some (IndexingModeDrafting.mergeIndexModeTrees i1 i2))
-    in
-    let newStructureMap =
-      match index with
-      | None -> structureMap
-      | Some index ->
-        IndexingModeDrafting.updateStructureWithIndexModeTree structureMap index
-    in
-    newStructureMap
-    |> [%sexp_of: IndexingModeDrafting.cuda_t]
-    |> Sexp.to_string_hum
-    |> Printf.sprintf "Structure pair after merging: %s"
-    |> Stdio.print_endline;
-    elements, newStructureMap, index
-;; *)
-
 type parPath =
-  { indexModeTree : IndexingModeDrafting.index_tree_cuda_t
+  { indexModeTree : IndexMode.index_tree_cuda_t
   ; inner : int
   ; extensible : bool
   }
 [@@deriving sexp_of]
 
-let rec findAllParOptions (expr : Nested.t) (structureMap : IndexingModeDrafting.cuda_t)
+let rec findAllParOptions (expr : Nested.t) (structureMap : IndexMode.cuda_t)
   : Nested.t * parPath list
   =
   match expr with
@@ -1048,74 +266,21 @@ let rec findAllParOptions (expr : Nested.t) (structureMap : IndexingModeDrafting
     let innerPaths =
       match innerPaths with
       | [] ->
-        [ { indexModeTree = IndexingModeDrafting.emptyIndexTree
+        [ { indexModeTree = IndexMode.emptyIndexTree
           ; inner = innerIterSpace
           ; extensible = true
           }
         ]
       | innerPaths -> innerPaths
     in
-    if Int.equal 3146 (Identifier.uniqueNum lb.label)
-    then
-      innerIterSpace
-      |> [%sexp_of: int]
-      |> Sexp.to_string_hum
-      |> Printf.sprintf "LoopBlock 3146 inner:\n%s"
-      |> Stdio.print_endline;
-    (* Stdio.print_endline *)
-    (*   (Printf.sprintf "Calculating new paths, we start with %d" (List.length innerPaths)); *)
     let newPossiblePaths =
       List.concat_map innerPaths ~f:(fun { indexModeTree; inner; extensible } ->
         let zeroPaths, bodyPaths = findAllParOptionsConsumer lb.consumer structureMap in
-        let allConsumerPathsCombos =
-          List.cartesian_product zeroPaths bodyPaths
-          (* |> List.filter ~f:(fun (a, b) -> (not a.extensible) && not b.extensible) *)
-        in
+        let allConsumerPathsCombos = List.cartesian_product zeroPaths bodyPaths in
         let structureMap =
-          IndexingModeDrafting.updateStructureWithIndexModeTree structureMap indexModeTree
+          IndexMode.updateStructureWithIndexModeTree structureMap indexModeTree
         in
-        (* if Int.equal 4754 (Identifier.uniqueNum lb.label) *)
-        (* then *)
-        (*   zeroPaths *)
-        (*   |> [%sexp_of: parPath list] *)
-        (*   |> Sexp.to_string_hum *)
-        (*   |> Printf.sprintf "LoopBlock 4754 zero:\n%s" *)
-        (*   |> Stdio.print_endline; *)
-        (* if Int.equal 4754 (Identifier.uniqueNum lb.label) *)
-        (* then *)
-        (*   bodyPaths *)
-        (*   |> [%sexp_of: parPath list] *)
-        (*   |> Sexp.to_string_hum *)
-        (*   |> Printf.sprintf "LoopBlock 4754 body:\n%s" *)
-        (*   |> Stdio.print_endline; *)
-        (* if Int.equal 4754 (Identifier.uniqueNum lb.label) *)
-        (* then *)
-        (*   allConsumerPathsCombos *)
-        (*   |> [%sexp_of: (parPath * parPath) list] *)
-        (*   |> Sexp.to_string_hum *)
-        (*   |> Printf.sprintf "LoopBlock 4754 cons:\n%s" *)
-        (*   |> Stdio.print_endline; *)
-        (* (indexModeTree, structureMap) *)
-        (* |> [%sexp_of: *)
-        (*      IndexingModeDrafting.index_tree_cuda_t * IndexingModeDrafting.cuda_t] *)
-        (* |> Sexp.to_string_hum *)
-        (* |> Printf.sprintf "Index tree and structure map: %s" *)
-        (* |> Stdio.print_endline; *)
-        let loopBlockPar = IndexingModeDrafting.tryToParallelizeCUDA structureMap lb in
-        (* if Int.equal 6093 (Identifier.uniqueNum lb.label) *)
-        (* then *)
-        (*   structureMap *)
-        (*   |> [%sexp_of: IndexingModeDrafting.cuda_t] *)
-        (*   |> Sexp.to_string_hum *)
-        (*   |> Printf.sprintf "LoopBlock 6093 str map:\n%s" *)
-        (*   |> Stdio.print_endline; *)
-        (* if Int.equal 6093 (Identifier.uniqueNum lb.label) *)
-        (* then *)
-        (*   indexModeTree *)
-        (*   |> [%sexp_of: IndexingModeDrafting.index_tree_cuda_t] *)
-        (*   |> Sexp.to_string_hum *)
-        (*   |> Printf.sprintf "LoopBlock 6093 idx tree:\n%s" *)
-        (*   |> Stdio.print_endline; *)
+        let loopBlockPar = IndexMode.tryToParallelizeCUDA structureMap lb in
         match loopBlockPar with
         | None ->
           (match lb.consumer with
@@ -1124,15 +289,12 @@ let rec findAllParOptions (expr : Nested.t) (structureMap : IndexingModeDrafting
              List.concat_map allConsumerPathsCombos ~f:(fun (a, b) ->
                let inner = innerIterSpaceMap + a.inner + b.inner in
                let indexModeTree =
-                 IndexingModeDrafting.ParallelizationStructureCUDA.Branches
-                   [ indexModeTree; a.indexModeTree; b.indexModeTree ]
+                 IndexMode.branches [ indexModeTree; a.indexModeTree; b.indexModeTree ]
                in
                [ { indexModeTree; inner; extensible = false } ]))
         | Some loopBlockIndex ->
           let loopBlockIndex =
-            IndexingModeDrafting.createIndexModeAlloc
-              ~label:lb.label
-              ~indexMode:loopBlockIndex
+            IndexMode.createIndexModeAlloc ~label:lb.label ~indexMode:loopBlockIndex
           in
           if not extensible
           then (
@@ -1142,13 +304,12 @@ let rec findAllParOptions (expr : Nested.t) (structureMap : IndexingModeDrafting
               List.concat_map allConsumerPathsCombos ~f:(fun (a, b) ->
                 let inner = innerIterSpaceMap + a.inner + b.inner in
                 let indexModeTree =
-                  IndexingModeDrafting.ParallelizationStructureCUDA.Branches
-                    [ indexModeTree; a.indexModeTree; b.indexModeTree ]
+                  IndexMode.branches [ indexModeTree; a.indexModeTree; b.indexModeTree ]
                 in
                 [ { indexModeTree; inner; extensible } ]))
-          else if not (IndexingModeDrafting.hasBeenParallelized indexModeTree)
+          else if not (IndexMode.hasBeenParallelized indexModeTree)
           then (
-            (*we haven't done par on this path*)
+            (* we haven't done par on this path *)
             let allocatedThisLoop =
               Option.value loopBlockIndex.indexMode.allocatedThreads ~default:1
               * Option.value loopBlockIndex.indexMode.allocatedBlocks ~default:1
@@ -1158,13 +319,12 @@ let rec findAllParOptions (expr : Nested.t) (structureMap : IndexingModeDrafting
               List.concat_map allConsumerPathsCombos ~f:(fun (a, b) ->
                 let inner = (innerIterSpaceMap * allocatedThisLoop) + a.inner + b.inner in
                 let indexModeTree =
-                  IndexingModeDrafting.ParallelizationStructureCUDA.Branches
-                    [ a.indexModeTree; b.indexModeTree ]
+                  IndexMode.branches [ a.indexModeTree; b.indexModeTree ]
                 in
                 [ { indexModeTree; inner; extensible = false } ])
             in
             let extTreeOpt =
-              IndexingModeDrafting.appendIndexToTree [ loopBlockIndex ] indexModeTree
+              IndexMode.appendIndexToTree [ loopBlockIndex ] indexModeTree
             in
             (* TODO: for the time being we only extend if there is no consumer *)
             let extExtensible = Option.is_none lb.consumer in
@@ -1178,18 +338,11 @@ let rec findAllParOptions (expr : Nested.t) (structureMap : IndexingModeDrafting
                 }
               in
               let res = List.append [ dontPar; startPar ] dontParWithParConsumer in
-              if Int.equal 4754 (Identifier.uniqueNum lb.label)
-              then
-                res
-                |> [%sexp_of: parPath list]
-                |> Sexp.to_string_hum
-                |> Printf.sprintf "LoopBlock 4754 foo:\n%s"
-                |> Stdio.print_endline;
               res)
           else (
             (* has been parallelized and extensible *)
             let extTreeOpt =
-              IndexingModeDrafting.appendIndexToTree [ loopBlockIndex ] indexModeTree
+              IndexMode.appendIndexToTree [ loopBlockIndex ] indexModeTree
             in
             match extTreeOpt with
             | None -> raise Unimplemented.default
@@ -1206,30 +359,12 @@ let rec findAllParOptions (expr : Nested.t) (structureMap : IndexingModeDrafting
                 List.concat_map allConsumerPathsCombos ~f:(fun (a, b) ->
                   let inner = inner + a.inner + b.inner in
                   let indexModeTree =
-                    IndexingModeDrafting.ParallelizationStructureCUDA.Branches
-                      [ indexModeTree; a.indexModeTree; b.indexModeTree ]
+                    IndexMode.branches [ indexModeTree; a.indexModeTree; b.indexModeTree ]
                   in
                   [ { indexModeTree; inner; extensible = false } ])
               in
               List.append stopParWithParConsumer [ continuePar; stopPar ]))
     in
-    if Int.equal 3146 (Identifier.uniqueNum lb.label)
-    then
-      newPossiblePaths
-      |> [%sexp_of: parPath list]
-      |> Sexp.to_string_hum
-      |> Printf.sprintf "LoopBlock 3146 new paths:\n%s"
-      |> Stdio.print_endline;
-    (* newPossiblePaths *)
-    (* |> [%sexp_of: parPath list] *)
-    (* |> Sexp.to_string_hum *)
-    (* |> Printf.sprintf "New possiblePaths: \n%s" *)
-    (* |> Stdio.print_endline; *)
-    (* innerPaths *)
-    (* |> [%sexp_of: parPath list] *)
-    (* |> Sexp.to_string_hum *)
-    (* |> Printf.sprintf "innerPaths: \n%s" *)
-    (* |> Stdio.print_endline; *)
     LoopBlock lb, newPossiblePaths
   | Box { indices; body; bodyType; type' } ->
     let newBody, paths = findAllParOptions body structureMap in
@@ -1262,9 +397,7 @@ let rec findAllParOptions (expr : Nested.t) (structureMap : IndexingModeDrafting
     let newUnzipArg, paths = findAllParOptions unzipArg structureMap in
     Unzip { unzipArg = newUnzipArg; type' }, paths
 
-and findAllParOptionsList
-  (elements : Nested.t list)
-  (structureMap : IndexingModeDrafting.cuda_t)
+and findAllParOptionsList (elements : Nested.t list) (structureMap : IndexMode.cuda_t)
   : Nested.t list * parPath list
   =
   match elements with
@@ -1283,7 +416,7 @@ and findAllParOptionsList
           let bestPath =
             List.fold (List.tl_exn paths) ~init:(List.hd_exn paths) ~f:(fun best path ->
               let newBest =
-                IndexingModeDrafting.compareStructures
+                IndexMode.compareStructures
                   best.indexModeTree
                   path.indexModeTree
                   best.inner
@@ -1293,9 +426,7 @@ and findAllParOptionsList
               | None -> best
               | Some newBest ->
                 let newInner =
-                  if IndexingModeDrafting.equal_index_tree_cuda_t
-                       newBest
-                       best.indexModeTree
+                  if IndexMode.equal_index_tree_cuda_t newBest best.indexModeTree
                   then best.inner
                   else path.inner
                 in
@@ -1317,88 +448,21 @@ and findAllParOptionsList
         paths)
     in
     let branchPathTree =
-      IndexingModeDrafting.ParallelizationStructureCUDA.Branches
-        (List.map branchedApproach ~f:(fun b -> b.indexModeTree))
+      IndexMode.branches (List.map branchedApproach ~f:(fun b -> b.indexModeTree))
     in
     let branchTreeInner =
       List.fold branchedApproach ~init:0 ~f:(fun acc b -> acc + b.inner)
     in
     let branchExt =
       List.for_all branchedApproach ~f:(fun b ->
-        not (IndexingModeDrafting.hasBeenParallelized b.indexModeTree))
+        not (IndexMode.hasBeenParallelized b.indexModeTree))
     in
     let branchPath =
       { indexModeTree = branchPathTree; inner = branchTreeInner; extensible = branchExt }
     in
-    (* branchPath *)
-    (* |> [%sexp_of: parPath] *)
-    (* |> Sexp.to_string_hum *)
-    (* |> Printf.sprintf "Branch path:\n%s" *)
-    (* |> Stdio.print_endline; *)
     let allPaths = List.concat allSegmentedPaths in
-    (* let extensiblePaths, nonExtensiblePaths = *)
-    (*   List.partition_tf allPaths ~f:(fun { indexModeTree = _; inner = _; extensible } -> *)
-    (*     extensible) *)
-    (* in *)
-    (* i don't have a good explanations why these two are different but
-       from what i can tell, you wanna choose from 'completed' paths
-       but for non-complete, you want to merge instead because you might grow it further *)
-    (* let _ = *)
-    (*   match extensiblePaths with *)
-    (*   | [] -> [] *)
-    (*   | hd :: tl -> *)
-    (*     let bestPath = *)
-    (*       List.fold tl ~init:hd ~f:(fun best path -> *)
-    (*         match best.indexModeTree, path.indexModeTree with *)
-    (*         | FullPar bestTree, FullPar pathTree -> *)
-    (*           let newBest = *)
-    (*             IndexingModeDrafting.mergeIndexModeAllocTrees bestTree pathTree *)
-    (*           in *)
-    (*           { indexModeTree = FullPar newBest *)
-    (*           ; inner = Int.max best.inner path.inner *)
-    (*           ; extensible = true *)
-    (*           } *)
-    (*         | _ -> raise Unimplemented.default) *)
-    (*     in *)
-    (*     [ bestPath ] *)
-    (* in *)
-    (* let _ = *)
-    (*   if List.is_empty nonExtensiblePaths *)
-    (*   then [] *)
-    (*   else ( *)
-    (*     let bestPath = *)
-    (*       List.fold *)
-    (*         (List.tl_exn nonExtensiblePaths) *)
-    (*         ~init:(List.hd_exn nonExtensiblePaths) *)
-    (*         ~f:(fun best path -> *)
-    (*           let newBest = *)
-    (*             IndexingModeDrafting.compareStructures *)
-    (*               best.indexModeTree *)
-    (*               path.indexModeTree *)
-    (*               best.inner *)
-    (*               path.inner *)
-    (*           in *)
-    (*           match newBest with *)
-    (*           | None -> best *)
-    (*           | Some newBest -> *)
-    (*             let newInner = *)
-    (*               if IndexingModeDrafting.equal_index_tree_cuda_t *)
-    (*                    newBest *)
-    (*                    best.indexModeTree *)
-    (*               then best.inner *)
-    (*               else path.inner *)
-    (*             in *)
-    (*             { indexModeTree = newBest; inner = newInner; extensible = false }) *)
-    (*     in *)
-    (*     [ bestPath ]) *)
-    (* in *)
-    (* bestNonExtensiblePath *)
-    (* |> [%sexp_of: parPath list] *)
-    (* |> Sexp.to_string_hum *)
-    (* |> Printf.sprintf "Best non extensible:\n%s" *)
-    (* |> Stdio.print_endline; *)
-    (* elements, branchPath :: List.append bestExtensiblePath bestNonExtensiblePath *)
-    (* elements, branchPath :: bestExtensiblePath *)
+    (* TODO: it might be worth to filter out some of the paths yet, but it seems like *)
+    (*       performance is ok even without any filtering of branches *)
     elements, branchPath :: allPaths
 
 and findAllParOptionsConsumer (consumer : Nested.Expr.consumerOp option) structureMap =
@@ -1418,9 +482,12 @@ and findAllParOptionsConsumer (consumer : Nested.Expr.consumerOp option) structu
      | Nested.Expr.Scatter _ -> [], [])
 ;;
 
-let tableFromPath =
-  let open IndexingModeDrafting.ParallelizationStructureCUDA in
-  let rec tableFromPathHelper table = function
+let tableFromPath
+  : IndexMode.index_tree_cuda_t -> (Identifier.t, IndexMode.index_cuda_t, _) Map.t
+  =
+  let rec tableFromPathHelper table
+    : IndexMode.index_tree_cuda_t -> (Identifier.t, IndexMode.index_cuda_t, _) Map.t
+    = function
     | FullPar allocTree ->
       List.fold allocTree ~init:table ~f:(fun table allocs ->
         List.fold allocs ~init:table ~f:(fun table { indexMode; loopBlockLabel } ->
@@ -1433,7 +500,7 @@ let tableFromPath =
 
 let rec computeKernelSize
   (expr : Nested.t)
-  (loopBlockParTable : (Identifier.t, IndexingModeDrafting.index_cuda_t, _) Map.t)
+  (loopBlockParTable : (Identifier.t, IndexMode.index_cuda_t, _) Map.t)
   : int * int
   =
   let default = 1, 1 in
@@ -2001,32 +1068,6 @@ and rewriteWithParConsumerHostDevicePar consumer indexMode loopBlockParTable
 
 and exprToMapBody (expr : Nested.t) loopBlockParTable =
   match expr with
-  (* | LoopBlock *)
-  (*     { frameShape *)
-  (*     ; label *)
-  (*     ; mapArgs *)
-  (*     ; mapIotas *)
-  (*     ; mapBody *)
-  (*     ; mapBodyMatcher *)
-  (*     ; mapResults *)
-  (*     ; consumer = None *)
-  (*     ; type' *)
-  (*     } -> *)
-  (*   let indexMode = Map.find loopBlockParTable label in *)
-  (*   let mapBody = exprToMapBody mapBody loopBlockParTable in *)
-  (*   let type' = Type.Tuple type' in *)
-  (*   let mapKernel : Corn.Expr.mapKernel = *)
-  (*     { frameShape *)
-  (*     ; indexMode *)
-  (*     ; mapArgs *)
-  (*     ; mapIotas *)
-  (*     ; mapBody *)
-  (*     ; mapBodyMatcher *)
-  (*     ; mapResults *)
-  (*     ; type' *)
-  (*     } *)
-  (*   in *)
-  (*   MapBodySubMap (MapBodyMap mapKernel) *)
   | (TupleDeref _ | Values _ | LoopBlock _) as expr ->
     let possibleSubMap = exprToMapBodySubMap expr loopBlockParTable in
     (match possibleSubMap with
@@ -2081,22 +1122,16 @@ and exprToMapBodySubMap (expr : Nested.t) loopBlockParTable
 ;;
 
 let kernelize (expr : Nested.t) : (CompilerState.state, Corn.t, _) State.t =
-  (* let open KernelizeState.Let_syntax in *)
-  (* Stdio.prerr_endline "Fuse and Simplify done"; *)
-  let loopStructure = extractLoopStructure expr in
-  Stdio.print_endline
-    (Printf.sprintf
-       "Loop structure: \n%s"
-       (Sexp.to_string_hum ([%sexp_of: loopStructureTree] loopStructure)));
-  let _, paths = findAllParOptions expr IndexingModeDrafting.defaultCUDA in
-  (* let _, _, index = tryToParallelize expr IndexingModeDrafting.defaultCUDA in*)
+  Stdio.prerr_endline "Fuse and Simplify done";
+  (* This stage consists of 2 steps: collect possible paths and rewrite the program using the best one *)
+  let _, paths = findAllParOptions expr IndexMode.defaultCUDA in
   let bestPath =
     match paths with
     | [] -> raise Unimplemented.default
     | hd :: tl ->
       List.fold tl ~init:hd ~f:(fun best path ->
         let newBest =
-          IndexingModeDrafting.compareStructures
+          IndexMode.compareStructures
             best.indexModeTree
             path.indexModeTree
             best.inner
@@ -2106,35 +1141,27 @@ let kernelize (expr : Nested.t) : (CompilerState.state, Corn.t, _) State.t =
         | None -> best
         | Some newBest ->
           let newInner =
-            if IndexingModeDrafting.equal_index_tree_cuda_t newBest best.indexModeTree
+            if IndexMode.equal_index_tree_cuda_t newBest best.indexModeTree
             then best.inner
             else path.inner
           in
           { indexModeTree = newBest; inner = newInner; extensible = false })
   in
-  paths
-  |> [%sexp_of: parPath list]
-  |> Sexp.to_string_hum
-  |> Printf.sprintf "Resulting index: %s"
-  |> Stdio.print_endline;
-  bestPath
-  |> [%sexp_of: parPath]
-  |> Sexp.to_string_hum
-  |> Printf.sprintf "Best path %s"
-  |> Stdio.print_endline;
+  (* paths *)
+  (* |> [%sexp_of: parPath list] *)
+  (* |> Sexp.to_string_hum *)
+  (* |> Printf.sprintf "Resulting indices: %s" *)
+  (* |> Stdio.print_endline; *)
+  (* bestPath *)
+  (* |> [%sexp_of: parPath] *)
+  (* |> Sexp.to_string_hum *)
+  (* |> Printf.sprintf "Best path %s" *)
+  (* |> Stdio.print_endline; *)
   let loopBlockParTable = tableFromPath bestPath.indexModeTree in
   let newExpr : Corn.t = rewriteWithPar expr loopBlockParTable in
-  (* newExpr *)
-  (* |> [%sexp_of: host Corn.Expr.t] *)
-  (* |> Sexp.to_string_hum *)
-  (* |> Printf.sprintf "new expr:\n%s" *)
-  (* |> Stdio.print_endline; *)
-  (* let%map opts = getOpts expr in opts.hostExpr *)
   Stdio.prerr_endline "Kernelize done";
   State.return newExpr
 ;;
-
-(* newExpr *)
 
 module Stage (SB : Source.BuilderT) = struct
   type state = CompilerState.state

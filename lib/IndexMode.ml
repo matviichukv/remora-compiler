@@ -1,7 +1,5 @@
 open! Base
 
-type 'd parallelIndexing = { spec : 'd }
-
 (* Execution device specific structure that decides the flattening/kernel allocation *)
 module type ParallelizationStructure = sig
   type t
@@ -38,6 +36,8 @@ module ParallelizationStructureCUDA = struct
     | Branches of indexModeTree list
   [@@deriving sexp_of, equal]
 
+  (* TODO: those are some arbitrary numbers, we should derive them from device information *)
+
   let default = { availableThreads = Some 1024; availableBlocks = Some 65536 }
 
   (* Size of wapr, we don't want to allocate any extra beyond this *)
@@ -72,7 +72,7 @@ module ParallelizationStructureCUDA = struct
     match availableThreads, availableBlocks with
     | None, None -> { availableThreads; availableBlocks }
     | Some _, None ->
-      raise (Unreachable.Error "Should not have threads without any threads")
+      raise (Unreachable.Error "Should not have threads without any blocks")
     | None, Some availableBlocks ->
       { availableThreads = None; availableBlocks = Some availableBlocks }
     | Some availableThreads, Some availableBlocks ->
@@ -364,8 +364,6 @@ module ParallelizationStructureCUDA = struct
     =
     let a_iteration_total = calcIterationSpace a in
     let b_iteration_total = calcIterationSpace b in
-    (* Stdio.print_endline (Printf.sprintf "A iter total: %d" a_iteration_total); *)
-    (* Stdio.print_endline (Printf.sprintf "B iter total: %d" b_iteration_total); *)
     let a_strictly_better =
       a_iteration_total > b_iteration_total
       (* && a_iteration_total <= maximumTotalThreads *)
@@ -376,18 +374,11 @@ module ParallelizationStructureCUDA = struct
       (* && b_iteration_total <= maximumTotalThreads *)
       && b_inner <= maximumInnerSeqSpace
     in
+    (* TODO: don't check total iter space, instead look at maximum depth of all subtrees and go from there *)
     if a_strictly_better
     then Some a (* a has more parallelism and is below limit so it's better *)
     else if b_strictly_better
-    then
-      Some b
-      (* b has more parallelism and is below limit so it's better *)
-      (* else if a_iteration_total < b_iteration_total *)
-      (* then Some a (\* b is over the limit *\) *)
-      (* else if b_iteration_total < a_iteration_total *)
-      (* then Some b (\* a is over the limit *\) *)
-      (* else if a_iteration_total > maximumTotalThreads (\* a and b same iteration space *\) *)
-      (* then None (\* both are over the limit so we want to do neither of them *\) *)
+    then Some b
     else if a_inner < maximumInnerSeqSpace && a_inner > b_inner
     then Some a (* a has more inner instructions and below the limit so it's better *)
     else if b_inner < maximumInnerSeqSpace && b_inner > a_inner
@@ -414,10 +405,16 @@ module ParallelizationStructureCUDA = struct
   let emptyIndexTree = FullPar []
 end
 
-module AbstractParalelThing (P : ParallelizationStructure) = struct
-  let tryToParallelize = P.tryToParallelize
-  let default = P.default
-end
+type cuda_t = ParallelizationStructureCUDA.t [@@deriving sexp_of]
+
+type index_cuda_t = ParallelizationStructureCUDA.indexMode
+[@@deriving sexp_of, equal, compare]
+
+type index_cuda_alloc_t = ParallelizationStructureCUDA.indexModeAlloc
+[@@deriving sexp_of, equal, compare]
+
+type index_tree_cuda_t = ParallelizationStructureCUDA.indexModeTree
+[@@deriving sexp_of, equal]
 
 let tryToParallelizeCUDA = ParallelizationStructureCUDA.tryToParallelize
 let defaultCUDA = ParallelizationStructureCUDA.default
@@ -431,24 +428,14 @@ let updateStructureWithIndexModeTree =
   ParallelizationStructureCUDA.updateStructureWithIndexModeTree
 ;;
 
+let createIndexModeAlloc ~label ~indexMode : ParallelizationStructureCUDA.indexModeAlloc =
+  ParallelizationStructureCUDA.{ loopBlockLabel = label; indexMode }
+;;
+
 let mergeIndexModeTrees = ParallelizationStructureCUDA.mergeIndexModeTrees
 let mergeIndexModeAllocTrees = ParallelizationStructureCUDA.mergeIndexModeAllocTrees
 let compareStructures = ParallelizationStructureCUDA.compareStructures
 let appendIndexToTree = ParallelizationStructureCUDA.appendIndexToTree
 let emptyIndexTree = ParallelizationStructureCUDA.emptyIndexTree
 let hasBeenParallelized = ParallelizationStructureCUDA.hasBeenParallelized
-
-type cuda_t = ParallelizationStructureCUDA.t [@@deriving sexp_of]
-
-type index_cuda_t = ParallelizationStructureCUDA.indexMode
-[@@deriving sexp_of, equal, compare]
-
-type index_cuda_alloc_t = ParallelizationStructureCUDA.indexModeAlloc
-[@@deriving sexp_of, equal, compare]
-
-let createIndexModeAlloc ~label ~indexMode : ParallelizationStructureCUDA.indexModeAlloc =
-  ParallelizationStructureCUDA.{ loopBlockLabel = label; indexMode }
-;;
-
-type index_tree_cuda_t = ParallelizationStructureCUDA.indexModeTree
-[@@deriving sexp_of, equal]
+let branches branchList = ParallelizationStructureCUDA.Branches branchList

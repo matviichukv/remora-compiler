@@ -1,7 +1,7 @@
 open! Base
 
 module type S = sig
-  type t [@@deriving compare, sexp, equal]
+  type t [@@deriving compare, sexp, equal, show]
   type comparator_witness
 
   val comparator : (t, comparator_witness) Comparator.t
@@ -22,7 +22,7 @@ module Make () = struct
       { name : string
       ; id : int
       }
-    [@@deriving compare, of_sexp, equal]
+    [@@deriving compare, of_sexp, equal, show]
 
     let show { name; id } = [%string "%{name}.%{id#Int}"]
     let sexp_of_t id = Sexp.Atom (show id)

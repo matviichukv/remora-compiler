@@ -165,14 +165,14 @@ module Mem = struct
         { elements : t list
         ; type' : Type.t
         }
+        (** mem is expected to have an array type (or a tuple of arrays) where the
+            first shape element is a single dimension. offset is an index of an element
+            in that array *)
     | Index of
         { mem : t
         ; offset : Index.dimension
         ; type' : Type.t
         }
-        (** mem is expected to have an array type (or a tuple of arrays) where the
-            first shape element is a single dimension. offset is an index of an element
-            in that array *)
 
   let type' = function
     | Ref ref -> ref.type'

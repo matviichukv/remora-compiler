@@ -707,21 +707,6 @@ let declareAllAllocs prog =
   return result
 ;;
 
-let declareAllAllocsFun prog f =
-  let open CompilerState in
-  let open Let_syntax in
-  let%bind result, allocs = prog in
-  let result = f result in
-  let result =
-    match allocs with
-    | [] -> result
-    | _ ->
-      Acorn.Expr.MallocLet
-        { memArgs = List.map allocs ~f:AllocAcc.allocationToMallocMemArg; body = result }
-  in
-  return result
-;;
-
 let declareAllUsedAllocs prog =
   let open CompilerState in
   let open Let_syntax in
@@ -880,7 +865,6 @@ let rec allocRequest
         ; type'
         } ->
     let type' = canonicalizeTupleType type' in
-    let _ = blocks in
     let mapTargetAddr, consumerTargetAddr =
       match targetAddr with
       | None -> None, None
@@ -1261,7 +1245,6 @@ let rec allocRequest
       in
       return (result, [])
     in
-    (* let%bind declaredLet = declareAllAllocsFun args (fun args -> Let { args; body }) in *)
     writtenExprToAllocResult @@ declaredLet
   | LoopBlock loopBlock ->
     allocLoopBlock
@@ -1277,24 +1260,34 @@ let rec allocRequest
   | LoopKernel { kernel = loopBlock; blocks; threads } ->
     let type' = canonicalizeType @@ Tuple loopBlock.type' in
     let%bind loopBlockResultMem = getMemForResult type' "loop-block-mem-result" in
-    allocLoopBlock
-      ~wrapLoopBlock:(fun loopBlock mapResultMemDeviceInterim ->
-        Expr.LoopKernel
-          { kernel = { loopBlock; mapResultMemDeviceInterim }
-          ; captures = ()
-          ; blocks
-          ; threads
-          })
-      ~isKernel:true
-      ~blocks
-      ~innerMallocLoc:MallocDevice
-      ~createMapTargetAddr:(fun _ -> None)
-      ~createMapResultMemFinal:(fun _ ->
-        return @@ Mem.tupleDeref ~tuple:loopBlockResultMem ~index:0)
-      ~createConsumerTargetAddr:(fun _ -> None)
-      ~createConsumerResultMemFinal:(fun _ ->
-        return @@ Mem.tupleDeref ~tuple:loopBlockResultMem ~index:1)
-      loopBlock
+    let allocedKernel =
+      allocLoopBlock
+        ~wrapLoopBlock:(fun loopBlock mapResultMemDeviceInterim ->
+          Expr.LoopKernel
+            { kernel = { loopBlock; mapResultMemDeviceInterim }
+            ; captures = ()
+            ; blocks
+            ; threads
+            })
+        ~isKernel:true
+        ~blocks
+        ~innerMallocLoc:MallocDevice
+        ~createMapTargetAddr:(fun _ -> None)
+        ~createMapResultMemFinal:(fun _ ->
+          return @@ Mem.tupleDeref ~tuple:loopBlockResultMem ~index:0)
+        ~createConsumerTargetAddr:(fun _ -> None)
+        ~createConsumerResultMemFinal:(fun _ ->
+          return @@ Mem.tupleDeref ~tuple:loopBlockResultMem ~index:1)
+        loopBlock
+    in
+    let allocedKernel =
+      let open CompilerState in
+      let open Let_syntax in
+      let%bind { expr; statement }, b = allocedKernel in
+      let%map newExpr = declareAllAllocs (return (expr, b)) in
+      { expr = newExpr; statement }, []
+    in
+    allocedKernel
   | MapKernel { kernel = mapKernel; blocks; threads } ->
     let rec allocMapKernel
       ~outerBindingsForMapBody
