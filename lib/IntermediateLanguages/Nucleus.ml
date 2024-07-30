@@ -28,6 +28,7 @@ module Type = struct
     | FloatLiteral
     | CharacterLiteral
     | BooleanLiteral
+    | StringLiteral
 
   and atom =
     | Sigma of sigma
@@ -138,6 +139,12 @@ module Expr = struct
         ; argTypes : Type.t list
         ; retType : Type.t
         }
+    | IOFun of
+        { name : string
+        ; libName : string
+        ; argTypes : Type.t list
+        ; retType : Type.t
+        }
 
   and atomicPrimitive =
     { op : scalarOp
@@ -229,6 +236,7 @@ module Expr = struct
     | FloatLiteral of float
     | CharacterLiteral of char
     | BooleanLiteral of bool
+    | StringLiteral of string
 
   and array =
     | Ref of ref
@@ -258,6 +266,7 @@ module Expr = struct
     | Literal (FloatLiteral _) -> Literal FloatLiteral
     | Literal (CharacterLiteral _) -> Literal CharacterLiteral
     | Literal (BooleanLiteral _) -> Literal BooleanLiteral
+    | Literal (StringLiteral _) -> Literal StringLiteral
     | ArrayAsAtom arrayAtomic -> arrayAtomic.type'
     | AtomicPrimitive atomicPrimitive -> atomicPrimitive.type'
     | Values values -> Tuple values.type'

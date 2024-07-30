@@ -8,6 +8,7 @@ let prelude =
 #include <algorithm>
 #include <iostream>
 #include <vector>
+#include <highfive/highfive.hpp>
 
 static void HandleError(cudaError_t err, const char *file, int line) {
   if (err != cudaSuccess) {
@@ -162,6 +163,22 @@ void printArray(T* elements, int64_t* dims, int64_t dimCount) {
     }
   }
 };
+
+std::unordered_map<std::string, HighFive::File> files;
+
+template <typename T>
+void readH5(std::string filename, std::string dataset_name, T* data, size_t size) {
+  auto entry = files.find(filename);
+  if (entry == files.end()) {
+    HighFive::File file(filename);
+    files.insert(std::make_pair(filename, file));
+    entry = files.find(filename);
+  }
+  auto dataset = (*entry).second.getDataSet(dataset_name);
+  size_t datasetSize = dataset.getElementCount();
+  assert(datasetSize == size);
+  dataset.read(data);
+}
 |}
   |> String.strip
   |> String.split_lines
@@ -335,6 +352,7 @@ let genType ?(wrapInPtr = false) type' : (C.type', _) GenState.u =
          | Literal FloatLiteral -> return C.Float64
          | Literal CharacterLiteral -> return C.Char
          | Literal BooleanLiteral -> return C.Bool
+         | Literal StringLiteral -> return C.String
          | Ptr elementType ->
            let%bind elementType = genType elementType in
            return @@ C.Ptr elementType
@@ -698,7 +716,10 @@ let genCopyExprToMem =
       @@ Cx.(
            fieldDeref mem boxValueFieldName ~inPtr:memNeedsPtrDeref
            := expr %. boxValueFieldName)
-    | Atom (Literal (IntLiteral | FloatLiteral | BooleanLiteral | CharacterLiteral)) ->
+    | Atom
+        (Literal
+          (IntLiteral | FloatLiteral | BooleanLiteral | CharacterLiteral | StringLiteral))
+      ->
       let mem = if memNeedsPtrDeref then C.PtrDeref mem else mem in
       GenState.write @@ Cx.(mem := expr)
   in
@@ -1221,6 +1242,7 @@ and genExpr
   | _, Literal (FloatLiteral f) -> return @@ C.Literal (Float64Literal f)
   | _, Literal (CharacterLiteral c) -> return @@ C.Literal (CharLiteral c)
   | _, Literal (BooleanLiteral b) -> return @@ C.Literal (BoolLiteral b)
+  | _, Literal (StringLiteral s) -> return @@ C.Literal (StringLiteral s)
   | _, ScalarPrimitive { op; args; type' } ->
     let genBinop binop =
       let%bind args =
@@ -1276,6 +1298,25 @@ and genExpr
          args |> List.map ~f:(genExpr ~hostOrDevice ~store:false) |> GenState.all
        in
        storeIfRequested ~name:[%string "%{name}Result"] @@ Cx.callBuiltin libName args
+     | IOFun { name = _; libName; argTypes = _; retType; resultMem } ->
+       let%bind args =
+         args |> List.map ~f:(genExpr ~hostOrDevice ~store:false) |> GenState.all
+       in
+       (match resultMem with
+        | None ->
+          (* Most likely an output function, just call builtin and call it a day *)
+          return @@ Cx.callBuiltin libName args
+        | Some resultMem ->
+          let size =
+            match retType with
+            | Acorn.Type.Tuple _ -> raise Unimplemented.default
+            | Acorn.Type.Atom _ -> Cx.intLit 1
+            | Acorn.Type.Array { element = _; shape } ->
+              genShapeSize (NeList.to_list shape)
+          in
+          let%bind mem = genMem ~store:false resultMem in
+          let fullArgs = List.append args [ mem; size ] in
+          return @@ Cx.callBuiltin libName fullArgs)
      | If ->
        let cond, then', else' =
          match args with
@@ -3473,8 +3514,10 @@ and genExpr
         let%bind destType = genType ~wrapInPtr:false type' in
         return @@ Cx.initStruct destType elements
       | Atom (Sigma _)
-      | Atom (Literal (IntLiteral | FloatLiteral | BooleanLiteral | CharacterLiteral)) ->
-        return @@ C.PtrDeref mem
+      | Atom
+          (Literal
+            (IntLiteral | FloatLiteral | BooleanLiteral | CharacterLiteral | StringLiteral))
+        -> return @@ C.PtrDeref mem
     in
     let%bind mem = genMem ~store:true addr in
     genGetmem mem type'
@@ -3624,8 +3667,10 @@ and genMapBodyOnDevice
 let genPrint type' value =
   let open GenState.Let_syntax in
   match type' with
-  | Type.Atom (Literal (IntLiteral | FloatLiteral | CharacterLiteral | BooleanLiteral)) ->
-    GenState.write @@ C.Eval Cx.(refStr "std::cout" << value << charLit '\n')
+  | Type.Atom
+      (Literal
+        (IntLiteral | FloatLiteral | CharacterLiteral | BooleanLiteral | StringLiteral))
+    -> GenState.write @@ C.Eval Cx.(refStr "std::cout" << value << charLit '\n')
   | Type.Atom (Sigma _) -> raise Unimplemented.default
   | Type.Array { element; shape } ->
     let%bind cElement = genType (Atom element) in

@@ -25,6 +25,7 @@ module Base : S = struct
         ; "float", return (Type.Atom (Literal FloatLiteral))
         ; "char", return (Type.Atom (Literal CharacterLiteral))
         ; "bool", return (Type.Atom (Literal BooleanLiteral))
+        ; "constant-string", return (Type.Atom (Literal StringLiteral))
         ]
     in
     let%map types = makeSubEnv [] in
@@ -42,6 +43,21 @@ module Stdlib : S = struct
         { libName : string
         ; argTypes : string list
         ; retType : string
+        }
+    (* Similar to LibFunction but we allocate the result and pass it as argument. *)
+    (* type' has to be a function *)
+    | IOFunction of
+        { libName : string
+        ; typeParams : string list
+            (* List of type parameters to be passed to the C++ function. *)
+            (* Can use type variables, because all of the references are going *)
+            (* to be resolved when all the outer Pi/Forall lambdas were already resolved *)
+        ; libTypeParams : string list
+        ; indexParams : string list
+        ; argTypes : string list
+        ; retType : string
+            (* ; argCount : int *)
+            (* ; type' : string *)
         }
     | Expression of string
 
@@ -772,6 +788,18 @@ module Stdlib : S = struct
                   arr)))
             |}
       }
+    ; { name = "readH5"
+      ; userVisible = true
+      ; value =
+          IOFunction
+            { libName = "readH5"
+            ; typeParams = [ "t" ]
+            ; libTypeParams = [ "t" ]
+            ; indexParams = [ "@out-size" ]
+            ; argTypes = [ "constant-string"; "constant-string" ]
+            ; retType = "[t @out-size]"
+            }
+      }
     ]
   ;;
 
@@ -848,18 +876,120 @@ module Stdlib : S = struct
                 CompilerState.make ~f:(fun state ->
                   let check = TypeCheck.Kind.checkAndExpectArray ~env parsedRetType in
                   let result = CompilerState.run check state in
-                  MResult.assertNoErrors result ~f:(fun err ->
-                    let errMsg = TypeCheck.errorMessage err.elem in
-                    [%string "Type error when making %{name} in stdlib: %{errMsg}"]))
+                  let res =
+                    MResult.assertNoErrors result ~f:(fun err ->
+                      let errMsg = TypeCheck.errorMessage err.elem in
+                      [%string "Type error when making %{name} in stdlib: %{errMsg}"])
+                  in
+                  res)
               in
-              Expr.Primitive
-                { name = Func (LibFun { name; libName; argTypes; retType })
-                ; type' =
-                    Arr
-                      { element = Func { parameters = argTypes; return = retType }
-                      ; shape = []
-                      }
-                }
+              let res =
+                Expr.Primitive
+                  { name = Func (LibFun { name; libName; argTypes; retType })
+                  ; type' =
+                      Arr
+                        { element = Func { parameters = argTypes; return = retType }
+                        ; shape = []
+                        }
+                  }
+              in
+              res
+            | IOFunction _ -> raise Unimplemented.default
+            (* This is copy-pasted, but we need to parse this in a weird way so we need this *)
+            (* If we refactor Parse module and make MakeParser available, then it should be *)
+            (* less copy-pasted and nicer but that's a chunk of work *)
+            (* let parseBindingWithImplicitBound esexp ~atBound ~noAtBound = *)
+            (*   match esexp with *)
+            (*   | Esexp.Symbol (id, source) -> *)
+            (*     let bound = *)
+            (*       if String.is_prefix id ~prefix:"@" then atBound else noAtBound *)
+            (*     in *)
+            (*     MResult.MOk *)
+            (*       (Source.{ elem = id; source }, Source.{ elem = bound; source }, source) *)
+            (*   | _ -> *)
+            (*     MResult.err *)
+            (*       [%string "Expected an identifier in stdlib IO func %{libName}"] *)
+            (* in *)
+            (* let parseBuffer lexbuf = *)
+            (*   try MResult.MOk (Parser.prog Lexer.read lexbuf) with *)
+            (*   | Lexer.SyntaxError (msg, source) -> MResult.err (msg, source) *)
+            (*   | Parser.Error -> *)
+            (*     MResult.err *)
+            (*       ( "Syntax error" *)
+            (*       , SB.make ~start:lexbuf.lex_curr_p ~finish:lexbuf.lex_curr_p ) *)
+            (* in *)
+            (* let parseString str = *)
+            (*   let lexbuf = Lexing.from_string ~with_positions:true str in *)
+            (*   parseBuffer lexbuf *)
+            (* in *)
+            (* let%bind parsedTypeParams = *)
+            (*   typeParams *)
+            (*   |> List.map ~f:() *)
+            (*   |> List.map *)
+            (*        ~f: *)
+            (*          (parseBindingWithImplicitBound *)
+            (*             ~atBound:Kind.Array *)
+            (*             ~noAtBound:Kind.Atom) *)
+            (*   |> MResult.all *)
+            (*   |> MResult.assertNoErrors ~f:(fun (err, _) -> *)
+            (*     [%string "Type error when making %{name} in stdlib: %{err}"]) *)
+            (*   |> CompilerState.return *)
+            (* in *)
+            (* let%bind parsedIndexParams = *)
+            (*   indexParams *)
+            (*   |> List.map ~f:Parse.Default.IndexParser.parseString *)
+            (*   |> MResult.all *)
+            (*   |> MResult.assertNoErrors ~f:(fun (err, _) -> *)
+            (*     [%string "Type error when making %{name} in stdlib: %{err}"]) *)
+            (*   |> CompilerState.return *)
+            (* in *)
+            (* let%bind parsedLibTypeParams = *)
+            (*   libTypeParams *)
+            (*   |> List.map ~f:Parse.Default.TypeParser.parseString *)
+            (*   |> MResult.all *)
+            (*   |> MResult.assertNoErrors ~f:(fun (err, _) -> *)
+            (*     [%string "Type error when making %{name} in stdlib: %{err}"]) *)
+            (*   |> CompilerState.return *)
+            (* in *)
+            (* (\* let%bind typeParamIdentMap = parsedTypeParams |> List.map ~f:(fun t -> _) in *\) *)
+            (* let libTypeEnv = *)
+            (*   List.fold typeBindings ~init:env ~f:(fun acc t -> *)
+            (*     { acc with *)
+            (*       kinds = Map.add_exn ~key:t ~data:(Type.Atom (Type.AtomRef t)) *)
+            (*     }) *)
+            (* in *)
+            (* let%bind libTypeParams = *)
+            (*   CompilerState.make ~f:(fun state -> *)
+            (*     let checks = *)
+            (*       List.map parsedLibTypeParams ~f:(fun t -> *)
+            (*         TypeCheck.Kind.checkAndExpectAtom ~env t) *)
+            (*       |> CompilerState.all *)
+            (*     in *)
+            (*     let result = CompilerState.run checks state in *)
+            (*     MResult.assertNoErrors result ~f:(fun err -> *)
+            (*       let errMsg = TypeCheck.errorMessage err.elem in *)
+            (*       [%string *)
+            (*         "Type checking error when making %{name} in stdlib: %{errMsg}"])) *)
+            (* in *)
+            (* let%map primType = *)
+            (*   CompilerState.make ~f:(fun state -> *)
+            (*     let check = TypeCheck.Kind.checkAndExpectAtom ~env parsedType in *)
+            (*     let result = CompilerState.run check state in *)
+            (*     MResult.assertNoErrors result ~f:(fun err -> *)
+            (*       let errMsg = TypeCheck.errorMessage err.elem in *)
+            (*       [%string *)
+            (*         "Type checking error when making %{name} in stdlib: %{errMsg}"])) *)
+            (* in *)
+            (* let res = *)
+            (*   Expr.Primitive *)
+            (*     { name = *)
+            (*         Func *)
+            (*           (IOFun *)
+            (*              { name; libName; libTypeParams; argCount; type' = primType }) *)
+            (*     ; type' = Arr { element = primType; shape = [] } *)
+            (*     } *)
+            (* in *)
+            (* res *)
           in
           let typesEnv = Map.set typesEnv ~key:name ~data:value in
           { env with types = typesEnv })

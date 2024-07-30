@@ -148,6 +148,7 @@ end = struct
     | Literal FloatLiteral -> "float"
     | Literal CharacterLiteral -> "char"
     | Literal BooleanLiteral -> "bool"
+    | Literal StringLiteral -> "const_string"
 
   and type' : Typed.Type.t -> string = function
     | Array array -> showArray array
@@ -523,14 +524,14 @@ module KindChecker = struct
           | { elem = { binding; bound = { elem = bound; source = _ } }; source } ->
           { elem = ({ binding; bound } : ('s, Sort.t) Ast.param); source })
       in
-      let%bind { typedParams = parameters; extendedEnv = extendeSorts } =
+      let%bind { typedParams = parameters; extendedEnv = extendedSorts } =
         processParams
           env.sorts
           parameters
           ~makeError:(fun name -> DuplicateIndexParameterName name)
           ~boundToEnvEntry:sortBoundToEnvEntry
       in
-      let extendedEnv = { env with sorts = extendeSorts } in
+      let extendedEnv = { env with sorts = extendedSorts } in
       let%map body = checkAndExpectArray extendedEnv body in
       T.Atom (T.Pi { parameters; body })
     | U.Sigma { parameters; body } ->
@@ -663,6 +664,7 @@ module TypeCheck = struct
     | FloatLiteral _ -> ok ()
     | CharacterLiteral _ -> ok ()
     | BooleanLiteral _ -> ok ()
+    | StringLiteral _ -> ok ()
   ;;
 
   let findEscapingRefs (env : Environment.t) type' =
@@ -731,6 +733,7 @@ module TypeCheck = struct
       | Atom (Literal FloatLiteral) -> []
       | Atom (Literal CharacterLiteral) -> []
       | Atom (Literal BooleanLiteral) -> []
+      | Atom (Literal StringLiteral) -> []
     in
     findInType env type'
   ;;
@@ -1547,6 +1550,7 @@ module TypeCheck = struct
     | U.FloatLiteral f -> CheckerState.return (T.Atom (Literal (FloatLiteral f)))
     | U.CharacterLiteral c -> CheckerState.return (T.Atom (Literal (CharacterLiteral c)))
     | U.BooleanLiteral b -> CheckerState.return (T.Atom (Literal (BooleanLiteral b)))
+    | U.StringLiteral s -> CheckerState.return (T.Atom (Literal (StringLiteral s)))
 
   and extractTupleArrayType
     (env : Environment.t)

@@ -64,12 +64,14 @@ and type' =
       { element : type'
       ; size : int
       }
+  | String
 
 and literal =
   | CharLiteral of char
   | Int64Literal of int
   | Float64Literal of float
   | BoolLiteral of bool
+  | StringLiteral of string
 
 and expr =
   | Literal of literal

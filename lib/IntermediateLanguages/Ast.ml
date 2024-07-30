@@ -185,6 +185,7 @@ module Expr = struct
     | FloatLiteral of float
     | CharacterLiteral of char
     | BooleanLiteral of bool
+    | StringLiteral of string
 
   and 's t = ('s, 's raw) Source.annotate [@@deriving sexp_of]
 end

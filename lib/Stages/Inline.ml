@@ -136,6 +136,7 @@ let rec inlineAtomTypeWithStack appStack : Typed.Type.atom -> Nucleus.Type.array
   | Literal IntLiteral -> { element = Literal IntLiteral; shape = [] }
   | Literal FloatLiteral -> { element = Literal FloatLiteral; shape = [] }
   | Literal BooleanLiteral -> { element = Literal BooleanLiteral; shape = [] }
+  | Literal StringLiteral -> { element = Literal StringLiteral; shape = [] }
   | Func _ -> { element = Tuple []; shape = [] }
   | Tuple t ->
     { element =
@@ -223,6 +224,7 @@ let assertValueRestriction value =
       | Literal FloatLiteral -> false
       | Literal CharacterLiteral -> false
       | Literal BooleanLiteral -> false
+      | Literal StringLiteral -> false
     in
     isPolymorphicArray
   in
@@ -248,8 +250,12 @@ let assertValueRestriction value =
       | IndexLambda _ -> true
       | Box box -> isValueArray box.body
       | TupleExpr { elements; type' = _ } -> List.for_all ~f:isValueAtom elements
-      | Literal (IntLiteral _ | FloatLiteral _ | CharacterLiteral _ | BooleanLiteral _) ->
-        true
+      | Literal
+          ( IntLiteral _
+          | FloatLiteral _
+          | CharacterLiteral _
+          | BooleanLiteral _
+          | StringLiteral _ ) -> true
     in
     isValueArray
   in
@@ -357,8 +363,12 @@ and genNewBindingsAtom env (expr : Explicit.Expr.atom) =
       elements |> List.map ~f:(genNewBindingsAtom env) |> InlineState.all
     in
     return @@ Expr.TupleExpr { elements; type' }
-  | Literal (IntLiteral _ | FloatLiteral _ | CharacterLiteral _ | BooleanLiteral _) as lit
-    -> return lit
+  | Literal
+      ( IntLiteral _
+      | FloatLiteral _
+      | CharacterLiteral _
+      | BooleanLiteral _
+      | StringLiteral _ ) as lit -> return lit
 
 and genNewBindingsForRef env ({ id; type' } : Explicit.Expr.ref) =
   Explicit.Expr.{ id = Map.find env id |> Option.value ~default:id; type' }
@@ -670,8 +680,12 @@ and inlineAtom indexEnv (appStack : appStack) (atom : Explicit.Expr.atom)
           Set.union_list (module Identifier) (bodyCaptures :: indexCaptures)
         | E.TupleExpr { elements; type' = _ } ->
           Set.union_list (module Identifier) (List.map ~f:atomCaptures elements)
-        | E.Literal (IntLiteral _ | FloatLiteral _ | CharacterLiteral _ | BooleanLiteral _)
-          -> Set.empty (module Identifier)
+        | E.Literal
+            ( IntLiteral _
+            | FloatLiteral _
+            | CharacterLiteral _
+            | BooleanLiteral _
+            | StringLiteral _ ) -> Set.empty (module Identifier)
       in
       atomCaptures (E.TermLambda lambda)
     in
@@ -753,6 +767,8 @@ and inlineAtom indexEnv (appStack : appStack) (atom : Explicit.Expr.atom)
     return (scalar (I.Literal (FloatLiteral f)), FunctionSet.Empty)
   | Literal (BooleanLiteral b) ->
     return (scalar (I.Literal (BooleanLiteral b)), FunctionSet.Empty)
+  | Literal (StringLiteral s) ->
+    return (scalar (I.Literal (StringLiteral s)), FunctionSet.Empty)
 
 and inlineTermApplication indexEnv appStack termApplication =
   let module E = Explicit.Expr in
@@ -868,6 +884,50 @@ and inlineTermApplication indexEnv appStack termApplication =
                   Nucleus.Type.Array (inlineArrayTypeWithStack [] argType))
             ; retType = Nucleus.Type.Array (inlineArrayTypeWithStack appStack retType)
             }
+     | IOFun { name; libName; libTypeParams; argCount; type' = funType } ->
+       let%bind _ = InlineState.getEnv () in
+       let _ = libTypeParams in
+       let rec partialInline appStack (type' : Explicit.Type.atom) =
+         match appStack, type' with
+         | TypeApp types :: rest, Forall { parameters; body } ->
+           let typeSubMap =
+             List.map2_exn types parameters ~f:(fun type' param -> param.binding, type')
+             |> Map.of_alist_exn (module Identifier)
+           in
+           let newType = Explicit.Substitute.Type.subTypesIntoArray typeSubMap body in
+           partialInlineArray rest newType
+         | IndexApp indices :: rest, Pi { parameters; body } ->
+           let indicesTypeMap =
+             List.map2_exn indices parameters ~f:(fun index param -> param.binding, index)
+             |> Map.of_alist_exn (module Identifier)
+           in
+           let newType =
+             Explicit.Substitute.Type.subIndicesIntoArray indicesTypeMap body
+           in
+           partialInlineArray rest newType
+         | [], Func { parameters; return } ->
+           let parameters =
+             List.map
+               ~f:(fun p -> Nucleus.Type.Array (inlineArrayTypeWithStack [] p))
+               parameters
+           in
+           let return = Nucleus.Type.Array (inlineArrayTypeWithStack [] return) in
+           Nucleus.Expr.IOFun { name; libName; argTypes = parameters; retType = return }
+         | stack, type' ->
+           raise
+             (Unreachable.Error
+                (Printf.sprintf
+                   "Got %s when trying to do an application %s"
+                   (Sexp.to_string_hum ([%sexp_of: application list] stack))
+                   (Sexp.to_string_hum ([%sexp_of: Explicit.Type.atom] type'))))
+       and partialInlineArray appStack (type' : Explicit.Type.array) =
+         match type' with
+         | Type.ArrayRef _ ->
+           raise (Unreachable.Error "There should be no refs left after inlining")
+         | Type.Arr { element; shape = _ } -> partialInline appStack element
+       in
+       let inlineIOFun = partialInline primitive.appStack funType in
+       scalarOp ~args:argCount inlineIOFun
      | IntToBool -> scalarOp ~args:1 IntToBool
      | BoolToInt -> scalarOp ~args:1 BoolToInt
      | IntToFloat -> scalarOp ~args:1 IntToFloat

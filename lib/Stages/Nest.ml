@@ -400,6 +400,7 @@ and nestAtom : Nucleus.Expr.atom -> (Nested.t, _) NestState.u =
     let type' = nestTypeTuple type' in
     Values { elements; type' }
   | AtomicPrimitive { op; args; type' } ->
+    let%bind op = nestScalarOp op in
     let%map args = args |> List.map ~f:nestAtom |> NestState.all in
     let type' = nestTypeAtom type' in
     ScalarPrimitive { op; args; type' }
@@ -407,6 +408,52 @@ and nestAtom : Nucleus.Expr.atom -> (Nested.t, _) NestState.u =
     let%map tuple = nestAtom tuple in
     let type' = nestTypeAtom type' in
     TupleDeref { tuple; index; type' }
+
+and nestScalarOp : Nucleus.Expr.scalarOp -> (Nested.Expr.scalarOp, _) NestState.u =
+  let open NestState.Let_syntax in
+  let open Nested.Expr in
+  let nestType type' =
+    match type' with
+    | Nucleus.Type.Array arr -> nestTypeArray arr
+    | Nucleus.Type.Atom a -> nestTypeAtom a
+  in
+  function
+  | Add -> return Add
+  | Sub -> return Sub
+  | Mul -> return Mul
+  | Div -> return Div
+  | Mod -> return Mod
+  | AddF -> return AddF
+  | SubF -> return SubF
+  | MulF -> return MulF
+  | DivF -> return DivF
+  | IntToBool -> return IntToBool
+  | BoolToInt -> return BoolToInt
+  | IntToFloat -> return IntToFloat
+  | FloatToInt -> return FloatToInt
+  | Equal -> return Equal
+  | EqualF -> return EqualF
+  | Ne -> return Ne
+  | Gt -> return Gt
+  | GtEq -> return GtEq
+  | Lt -> return Lt
+  | LtEq -> return LtEq
+  | GtF -> return GtF
+  | GtEqF -> return GtEqF
+  | LtF -> return LtF
+  | LtEqF -> return LtEqF
+  | And -> return And
+  | Or -> return Or
+  | Not -> return Not
+  | If -> return If
+  | LibFun { name; libName; argTypes; retType } ->
+    let retType = nestType retType in
+    let argTypes = List.map argTypes ~f:(fun a -> nestType a) in
+    return @@ LibFun { name; libName; argTypes; retType }
+  | IOFun { name; libName; argTypes; retType } ->
+    let retType = nestType retType in
+    let argTypes = List.map argTypes ~f:(fun a -> nestType a) in
+    return @@ LibFun { name; libName; argTypes; retType }
 ;;
 
 let nest (prog : Nucleus.t) : (CompilerState.state, Nested.t, _) State.t =

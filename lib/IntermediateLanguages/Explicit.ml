@@ -170,6 +170,7 @@ module Expr = struct
     | Literal (FloatLiteral _) -> Literal FloatLiteral
     | Literal (CharacterLiteral _) -> Literal CharacterLiteral
     | Literal (BooleanLiteral _) -> Literal BooleanLiteral
+    | Literal (StringLiteral _) -> Literal StringLiteral
   ;;
 
   let arrayType : array -> Type.array = function

@@ -125,7 +125,47 @@ module Expr = struct
     ; type' : Type.sigma
     }
 
-  and scalarOp = Nucleus.Expr.scalarOp
+  and scalarOp =
+    | Add
+    | Sub
+    | Mul
+    | Div
+    | Mod
+    | AddF
+    | SubF
+    | MulF
+    | DivF
+    | IntToBool
+    | BoolToInt
+    | IntToFloat
+    | FloatToInt
+    | Equal
+    | EqualF
+    | Ne
+    | Gt
+    | GtEq
+    | Lt
+    | LtEq
+    | GtF
+    | GtEqF
+    | LtF
+    | LtEqF
+    | And
+    | Or
+    | Not
+    | If
+    | LibFun of
+        { name : string
+        ; libName : string
+        ; argTypes : Type.t list
+        ; retType : Type.t
+        }
+    | IOFun of
+        { name : string
+        ; libName : string
+        ; argTypes : Type.t list
+        ; retType : Type.t
+        }
 
   and scalarPrimitive =
     { op : scalarOp
@@ -292,6 +332,7 @@ module Expr = struct
     | Literal (FloatLiteral _) -> Literal FloatLiteral
     | Literal (CharacterLiteral _) -> Literal CharacterLiteral
     | Literal (BooleanLiteral _) -> Literal BooleanLiteral
+    | Literal (StringLiteral _) -> Literal StringLiteral
     | ScalarPrimitive scalarPrimitive -> scalarPrimitive.type'
     | TupleDeref tupleDeref -> tupleDeref.type'
     | Values values -> Tuple values.type'
@@ -374,6 +415,7 @@ module Expr = struct
       | FloatLiteral f -> Sexp.Atom (Float.to_string f)
       | CharacterLiteral c -> Sexp.Atom [%string "'%{Char.to_string c}'"]
       | BooleanLiteral b -> Sexp.Atom (if b then "true" else "false")
+      | StringLiteral s -> Sexp.Atom s
 
     and sexp_of_scalarOp (op : scalarOp) =
       Sexp.Atom
@@ -406,7 +448,8 @@ module Expr = struct
          | GtEqF -> ">=."
          | LtF -> "<."
          | LtEqF -> "<=."
-         | LibFun { name; libName = _; argTypes = _; retType = _ } -> name)
+         | LibFun { name; libName = _; argTypes = _; retType = _ } -> name
+         | IOFun { name; libName = _; argTypes = _; retType = _ } -> name)
 
     and sexp_of_scalarPrimitive { op; args; type' = _ } =
       Sexp.List (sexp_of_scalarOp op :: List.map args ~f:sexp_of_t)
@@ -621,6 +664,7 @@ module Substitute = struct
       | Literal FloatLiteral -> Literal FloatLiteral
       | Literal CharacterLiteral -> Literal CharacterLiteral
       | Literal BooleanLiteral -> Literal BooleanLiteral
+      | Literal StringLiteral -> Literal StringLiteral
       | Array array -> subIndicesIntoArray indices array
       | Tuple elements -> Tuple (List.map elements ~f:(subIndicesIntoType indices))
 
@@ -639,6 +683,7 @@ module Substitute = struct
       | Literal FloatLiteral -> Literal FloatLiteral
       | Literal CharacterLiteral -> Literal CharacterLiteral
       | Literal BooleanLiteral -> Literal BooleanLiteral
+      | Literal StringLiteral -> Literal StringLiteral
       | Array array -> Array (subTypesIntoArray types array)
       | Tuple elements -> Tuple (List.map elements ~f:(subTypesIntoType types))
 

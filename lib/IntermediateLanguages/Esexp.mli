@@ -20,6 +20,7 @@ type 's t =
   | Integer of int * 's
   | Float of float * 's
   | Symbol of string * 's
+  | ConstantString of string * 's
 [@@deriving sexp_of]
 
 val source : (module Source.BuilderT with type source = 's) -> 's t -> 's

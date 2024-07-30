@@ -20,6 +20,8 @@ type 's t =
   | Integer of int * 's
   | Float of float * 's
   | Symbol of string * 's
+  (* Like string but interpreted as an atom instead of char array *)
+  | ConstantString of string * 's
 [@@deriving sexp_of]
 
 let source (type s) (module SB : Source.BuilderT with type source = s) : s t -> s
@@ -37,4 +39,5 @@ let source (type s) (module SB : Source.BuilderT with type source = s) : s t -> 
   | Integer (_, source) -> source
   | Float (_, source) -> source
   | Symbol (_, source) -> source
+  | ConstantString (_, source) -> source
 ;;

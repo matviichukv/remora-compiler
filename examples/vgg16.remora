@@ -5,6 +5,9 @@
   (let [d1-val (reify-dimension d2)]
     ((fn ([id [int]]) [(/ id d1-val) (% id d1-val)]) iota{| [d1 d2]})))
 
+(define (foo {t @t2 t3} {d1 d2 @s}
+             ([arr [t d1 @s]] [bar [@t2 d1 d2]] -> [t3 d2 @s])) ...)
+
 (define (indices-of/4{| d1 d2 d3 d4}): [int d1 d2 d3 d4 4]
   (let [d1-val (reify-dimension d1)]
     (let [d2-val (reify-dimension d2)]

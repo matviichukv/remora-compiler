@@ -1,5 +1,5 @@
 (menhir
- (modules EsexpParser))
+ (modules EsexpParser RemoraParser))
 
 (ocamllex EsexpLexer)
 
@@ -8,7 +8,7 @@
 (library
  (name remora)
  (public_name remora)
- (modules :standard EsexpParser EsexpLexer)
+ (modules :standard RemoraParser EsexpParser EsexpLexer)
  (libraries base re2)
  (preprocess
   (pps ppx_jane ppx_deriving.eq ppx_deriving.show ppx_deriving.ord)))

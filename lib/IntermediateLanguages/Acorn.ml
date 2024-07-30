@@ -295,7 +295,48 @@ module Expr = struct
     ; type' : Type.sigma
     }
 
-  and scalarOp = Nested.Expr.scalarOp
+  and scalarOp =
+    | Add
+    | Sub
+    | Mul
+    | Div
+    | Mod
+    | AddF
+    | SubF
+    | MulF
+    | DivF
+    | IntToBool
+    | BoolToInt
+    | IntToFloat
+    | FloatToInt
+    | Equal
+    | EqualF
+    | Ne
+    | Gt
+    | GtEq
+    | Lt
+    | LtEq
+    | GtF
+    | GtEqF
+    | LtF
+    | LtEqF
+    | And
+    | Or
+    | Not
+    | If
+    | LibFun of
+        { name : string
+        ; libName : string
+        ; argTypes : Type.t list
+        ; retType : Type.t
+        }
+    | IOFun of
+        { name : string
+        ; libName : string
+        ; argTypes : Type.t list
+        ; retType : Type.t
+        ; resultMem : Mem.t option
+        }
 
   and ('l, 'c) scalarPrimitive =
     { op : scalarOp
@@ -569,6 +610,7 @@ module Expr = struct
     | Literal (FloatLiteral _) -> Atom (Literal FloatLiteral)
     | Literal (CharacterLiteral _) -> Atom (Literal CharacterLiteral)
     | Literal (BooleanLiteral _) -> Atom (Literal BooleanLiteral)
+    | Literal (StringLiteral _) -> Atom (Literal StringLiteral)
     | ScalarPrimitive scalarPrimitive -> scalarPrimitive.type'
     | TupleDeref tupleDeref -> tupleDeref.type'
     | Values values -> Tuple values.type'
@@ -629,7 +671,40 @@ module Expr = struct
         ]
 
     and sexp_of_literal = [%sexp_of: Nested.Expr.literal]
-    and sexp_of_scalarOp = [%sexp_of: Nested.Expr.scalarOp]
+
+    and sexp_of_scalarOp (op : scalarOp) =
+      Sexp.Atom
+        (match op with
+         | Add -> "+"
+         | Sub -> "-"
+         | Mul -> "*"
+         | Div -> "/"
+         | Mod -> "%"
+         | AddF -> "+."
+         | SubF -> "-."
+         | MulF -> "*."
+         | DivF -> "/."
+         | And -> "and"
+         | Or -> "or"
+         | Not -> "not"
+         | If -> "if"
+         | IntToBool -> "int->bool"
+         | BoolToInt -> "bool->int"
+         | IntToFloat -> "int->float"
+         | FloatToInt -> "float->int"
+         | Equal -> "="
+         | EqualF -> "=."
+         | Ne -> "!="
+         | Gt -> ">"
+         | GtEq -> ">="
+         | Lt -> "<"
+         | LtEq -> "<="
+         | GtF -> ">."
+         | GtEqF -> ">=."
+         | LtF -> "<."
+         | LtEqF -> "<=."
+         | LibFun { name; libName = _; argTypes = _; retType = _ } -> name
+         | IOFun { name; libName = _; argTypes = _; retType = _; resultMem = _ } -> name)
 
     and sexp_of_scalarPrimitive
       : type a c. (a -> Sexp.t) -> (c -> Sexp.t) -> (a, c) scalarPrimitive -> Sexp.t

@@ -77,6 +77,7 @@ module Type = struct
     | FloatLiteral
     | CharacterLiteral
     | BooleanLiteral
+    | StringLiteral
 
   and array =
     | ArrayRef of Identifier.t
@@ -163,6 +164,13 @@ module Expr = struct
         ; libName : string
         ; argTypes : Type.array list
         ; retType : Type.array
+        }
+    | IOFun of
+        { name : string
+        ; libName : string
+        ; libTypeParams : Type.atom list
+        ; argCount : int
+        ; type' : Type.atom
         }
   [@@deriving compare, sexp, equal]
 
@@ -282,6 +290,7 @@ module Expr = struct
     | FloatLiteral of float
     | CharacterLiteral of char
     | BooleanLiteral of bool
+    | StringLiteral of string
 
   and array =
     | Ref of ref
@@ -326,6 +335,7 @@ module Expr = struct
     | Literal (FloatLiteral _) -> Literal FloatLiteral
     | Literal (CharacterLiteral _) -> Literal CharacterLiteral
     | Literal (BooleanLiteral _) -> Literal BooleanLiteral
+    | Literal (StringLiteral _) -> Literal StringLiteral
   ;;
 
   let arrayType : array -> Type.array = function
@@ -457,6 +467,7 @@ end = struct
         | FloatLiteral
         | CharacterLiteral
         | BooleanLiteral
+        | StringLiteral
 
       and array =
         | ArrayRef of Ref.t
@@ -532,6 +543,7 @@ end = struct
       | Type.Literal FloatLiteral -> Literal FloatLiteral
       | Type.Literal CharacterLiteral -> Literal CharacterLiteral
       | Type.Literal BooleanLiteral -> Literal BooleanLiteral
+      | Type.Literal StringLiteral -> Literal StringLiteral
 
     and typeFrom env depth = function
       | Type.Array array -> Array (arrayFrom env depth array)
@@ -621,6 +633,7 @@ module Substitute = struct
       | Literal FloatLiteral -> Literal FloatLiteral
       | Literal CharacterLiteral -> Literal CharacterLiteral
       | Literal BooleanLiteral -> Literal BooleanLiteral
+      | Literal StringLiteral -> Literal StringLiteral
 
     and subIndicesIntoFunc indices Type.{ parameters; return } =
       Type.
@@ -678,6 +691,7 @@ module Substitute = struct
       | Literal FloatLiteral -> Literal FloatLiteral
       | Literal CharacterLiteral -> Literal CharacterLiteral
       | Literal BooleanLiteral -> Literal BooleanLiteral
+      | Literal StringLiteral -> Literal StringLiteral
 
     and subTypesIntoFunc types Type.{ parameters; return } =
       Type.

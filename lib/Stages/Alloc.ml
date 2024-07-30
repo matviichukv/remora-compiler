@@ -420,8 +420,12 @@ let rec getPossibleMemSources
            (Map.find env id |> Option.value ~default:(Set.empty (module Identifier)))
            (Set.singleton (module Identifier) id)
     | Box { indices = _; body; type' = _ } -> getPossibleMemSources body
-    | Literal (IntLiteral _ | FloatLiteral _ | CharacterLiteral _ | BooleanLiteral _) ->
-      return @@ Set.empty (module Identifier)
+    | Literal
+        ( IntLiteral _
+        | FloatLiteral _
+        | CharacterLiteral _
+        | BooleanLiteral _
+        | StringLiteral _ ) -> return @@ Set.empty (module Identifier)
     | ScalarPrimitive { op = _; args; type' = _ } ->
       args
       |> List.map ~f:getPossibleMemSources
@@ -1539,6 +1543,52 @@ let rec allocRequest
     }
   | ScalarPrimitive { op; args; type' } ->
     let%bind args = args |> List.map ~f:(allocExpr ~writeToAddr:None) |> all in
+    let%bind (op : Acorn.Expr.scalarOp) =
+      let open AllocAcc in
+      let open Let_syntax in
+      let res : (_, Acorn.Expr.scalarOp * allocation list, _) CompilerState.t =
+        match op with
+        | Add -> return Acorn.Expr.Add
+        | Sub -> return Acorn.Expr.Sub
+        | Mul -> return Acorn.Expr.Mul
+        | Div -> return Acorn.Expr.Div
+        | Mod -> return Acorn.Expr.Mod
+        | AddF -> return Acorn.Expr.AddF
+        | SubF -> return Acorn.Expr.SubF
+        | MulF -> return Acorn.Expr.MulF
+        | DivF -> return Acorn.Expr.DivF
+        | And -> return Acorn.Expr.And
+        | Or -> return Acorn.Expr.Or
+        | Not -> return Acorn.Expr.Not
+        | If -> return Acorn.Expr.If
+        | IntToBool -> return Acorn.Expr.IntToBool
+        | BoolToInt -> return Acorn.Expr.BoolToInt
+        | IntToFloat -> return Acorn.Expr.IntToFloat
+        | FloatToInt -> return Acorn.Expr.FloatToInt
+        | Equal -> return Acorn.Expr.Equal
+        | EqualF -> return Acorn.Expr.EqualF
+        | Ne -> return Acorn.Expr.Ne
+        | Gt -> return Acorn.Expr.Gt
+        | GtEq -> return Acorn.Expr.GtEq
+        | Lt -> return Acorn.Expr.Lt
+        | LtEq -> return Acorn.Expr.LtEq
+        | GtF -> return Acorn.Expr.GtF
+        | GtEqF -> return Acorn.Expr.GtEqF
+        | LtF -> return Acorn.Expr.LtF
+        | LtEqF -> return Acorn.Expr.LtEqF
+        | LibFun { name; libName; argTypes; retType } ->
+          let retType = canonicalizeType retType in
+          let argTypes = List.map argTypes ~f:canonicalizeType in
+          return @@ Acorn.Expr.LibFun { name; libName; argTypes; retType }
+        | IOFun { name; libName; argTypes; retType } ->
+          let retType = canonicalizeType retType in
+          let argTypes = List.map argTypes ~f:canonicalizeType in
+          let%map resultMem = malloc ~mallocLoc retType [%string "%{name}Result"] in
+          let resultMem = Some resultMem in
+          Acorn.Expr.IOFun { name; libName; argTypes; retType; resultMem }
+      in
+      res
+    in
     unwrittenExprToAllocResult
     @@ ScalarPrimitive { op; args; type' = canonicalizeType type' }
   | TupleDeref { tuple; index; type' } ->

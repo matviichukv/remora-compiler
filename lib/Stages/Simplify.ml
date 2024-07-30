@@ -78,8 +78,12 @@ let rec nonComputational : Expr.t -> bool = function
   | ReifyIndex _ -> false
   | ShapeProd _ -> false
   | Box _ -> false
-  | Literal (IntLiteral _ | FloatLiteral _ | CharacterLiteral _ | BooleanLiteral _) ->
-    true
+  | Literal
+      ( IntLiteral _
+      | FloatLiteral _
+      | CharacterLiteral _
+      | BooleanLiteral _
+      | StringLiteral _ ) -> true
   | Values values -> List.for_all values.elements ~f:nonComputational
   | TupleDeref { tuple; index = _; type' = _ } -> nonComputational tuple
   | Let _ -> false
@@ -179,8 +183,12 @@ let getCounts =
       in
       Counts.merge
         [ argsCounts; bodyCounts; frameShapeCounts; mapResultsCounts; consumerCounts ]
-    | Literal (IntLiteral _ | FloatLiteral _ | CharacterLiteral _ | BooleanLiteral _) ->
-      Counts.empty
+    | Literal
+        ( IntLiteral _
+        | FloatLiteral _
+        | CharacterLiteral _
+        | BooleanLiteral _
+        | StringLiteral _ ) -> Counts.empty
     | Box { indices; body; bodyType = _; type' = _ } ->
       let indexCounts = List.map indices ~f:(getCountsIndex inLoop)
       and bodyCounts = getCountsExpr inLoop body in
@@ -321,8 +329,12 @@ let rec substituteExpr subVar subValue : Expr.t -> Expr.t option =
     let%map arrayArg = substituteExpr subVar subValue arrayArg
     and indexArg = substituteExpr subVar subValue indexArg in
     ContiguousSubArray { arrayArg; indexArg; originalShape; resultShape; type' }
-  | Literal (IntLiteral _ | FloatLiteral _ | CharacterLiteral _ | BooleanLiteral _) as lit
-    -> return lit
+  | Literal
+      ( IntLiteral _
+      | FloatLiteral _
+      | CharacterLiteral _
+      | BooleanLiteral _
+      | StringLiteral _ ) as lit -> return lit
   | Box { indices; body; bodyType; type' } ->
     let%map body = substituteExpr subVar subValue body in
     Box { indices; body; bodyType; type' }

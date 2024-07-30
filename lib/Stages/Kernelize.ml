@@ -587,6 +587,42 @@ let rec computeKernelSize
   | Unzip { unzipArg; type' = _ } -> computeKernelSize unzipArg loopBlockParTable
 ;;
 
+let convertScalarOp (op : Nested.Expr.scalarOp) : Corn.Expr.scalarOp =
+  match op with
+  | Add -> Add
+  | Sub -> Sub
+  | Mul -> Mul
+  | Div -> Div
+  | Mod -> Mod
+  | AddF -> AddF
+  | SubF -> SubF
+  | MulF -> MulF
+  | DivF -> DivF
+  | IntToBool -> IntToBool
+  | BoolToInt -> BoolToInt
+  | IntToFloat -> IntToFloat
+  | FloatToInt -> FloatToInt
+  | Equal -> Equal
+  | EqualF -> EqualF
+  | Ne -> Ne
+  | Gt -> Gt
+  | GtEq -> GtEq
+  | Lt -> Lt
+  | LtEq -> LtEq
+  | GtF -> GtF
+  | GtEqF -> GtEqF
+  | LtF -> LtF
+  | LtEqF -> LtEqF
+  | And -> And
+  | Or -> Or
+  | Not -> Not
+  | If -> If
+  | LibFun { name; libName; argTypes; retType } ->
+    LibFun { name; libName; argTypes; retType }
+  | IOFun { name; libName; argTypes; retType } ->
+    IOFun { name; libName; argTypes; retType }
+;;
+
 let rec rewriteWithPar (expr : Nested.t) loopBlockParTable : Corn.t =
   let rec rewriteWithParHelper (expr : Nested.t) : Corn.t =
     match expr with
@@ -745,6 +781,7 @@ let rec rewriteWithPar (expr : Nested.t) loopBlockParTable : Corn.t =
       Values { elements; type' }
     | ScalarPrimitive { op; args; type' } ->
       let args = List.map args ~f:rewriteWithParHelper in
+      let op = convertScalarOp op in
       ScalarPrimitive { op; args; type' }
     | TupleDeref { index; tuple; type' } ->
       let tuple = rewriteWithParHelper tuple in
@@ -958,6 +995,7 @@ and rewriteWithParDevice (expr : Nested.t) loopBlockParTable =
     in
     Values { elements; type' }
   | ScalarPrimitive { op; args; type' } ->
+    let op = convertScalarOp op in
     let args = List.map args ~f:(fun a -> rewriteWithParDevice a loopBlockParTable) in
     ScalarPrimitive { op; args; type' }
   | TupleDeref { index; tuple; type' } ->
@@ -1125,10 +1163,10 @@ let kernelize (expr : Nested.t) : (CompilerState.state, Corn.t, _) State.t =
   Stdio.prerr_endline "Fuse and Simplify done";
   (* This stage consists of 2 steps: collect possible paths and rewrite the program using the best one *)
   let _, paths = findAllParOptions expr IndexMode.defaultCUDA in
-  let bestPath =
-    match paths with
-    | [] -> raise Unimplemented.default
-    | hd :: tl ->
+  match paths with
+  | [] -> State.return @@ rewriteWithPar expr (Map.empty (module Identifier))
+  | hd :: tl ->
+    let bestPath =
       List.fold tl ~init:hd ~f:(fun best path ->
         let newBest =
           IndexMode.compareStructures
@@ -1146,21 +1184,11 @@ let kernelize (expr : Nested.t) : (CompilerState.state, Corn.t, _) State.t =
             else path.inner
           in
           { indexModeTree = newBest; inner = newInner; extensible = false })
-  in
-  (* paths *)
-  (* |> [%sexp_of: parPath list] *)
-  (* |> Sexp.to_string_hum *)
-  (* |> Printf.sprintf "Resulting indices: %s" *)
-  (* |> Stdio.print_endline; *)
-  (* bestPath *)
-  (* |> [%sexp_of: parPath] *)
-  (* |> Sexp.to_string_hum *)
-  (* |> Printf.sprintf "Best path %s" *)
-  (* |> Stdio.print_endline; *)
-  let loopBlockParTable = tableFromPath bestPath.indexModeTree in
-  let newExpr : Corn.t = rewriteWithPar expr loopBlockParTable in
-  Stdio.prerr_endline "Kernelize done";
-  State.return newExpr
+    in
+    let loopBlockParTable = tableFromPath bestPath.indexModeTree in
+    let newExpr : Corn.t = rewriteWithPar expr loopBlockParTable in
+    Stdio.prerr_endline "Kernelize done";
+    State.return newExpr
 ;;
 
 module Stage (SB : Source.BuilderT) = struct

@@ -90,6 +90,7 @@ let rec showType : type' -> string = function
   | Int64 -> "int64_t"
   | Float64 -> "float"
   | Bool -> "bool"
+  | String -> "std::string"
   | Ptr t -> [%string "%{showType t}*"]
   | TypeRef name -> showName name
   | TypeInstantiation { base; args } ->
@@ -120,6 +121,7 @@ let rec showExpr = function
   | Literal (Float64Literal f) -> Float.to_string f
   | Literal (BoolLiteral true) -> "true"
   | Literal (BoolLiteral false) -> "false"
+  | Literal (StringLiteral str) -> [%string "\"%{str}\""]
   | VarRef name -> showName name
   | FieldDeref { value; fieldName } -> [%string "%{showExpr value}.%{showName fieldName}"]
   | PtrFieldDeref { value; fieldName } ->

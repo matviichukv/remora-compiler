@@ -33,7 +33,7 @@ module Make (SB : Source.BuilderT) = struct
   type source = SB.source
 
   module Lexer = EsexpLexer.Make (SB)
-  module Parser = EsexpParser.Make (SB)
+  module Parser = RemoraParser.Make (SB)
 
   type error = string * SB.source
   type 't result = ('t, error) MResult.t
@@ -120,6 +120,7 @@ module Make (SB : Source.BuilderT) = struct
 
   and parseType : 's Esexp.t -> ('s Type.t, error) MResult.t =
     (* A function used for parsing Forall, Pi, and Sigma *)
+    (* atBound is when the name has @ in front, noAtBound when it doesn't *)
     let parseAbstraction
       (type k)
       (components : source Esexp.t list)
@@ -328,6 +329,7 @@ module Make (SB : Source.BuilderT) = struct
     | Symbol (id, source) -> MOk { elem = Expr.Ref id; source }
     | Integer (i, source) -> MOk { elem = Expr.IntLiteral i; source }
     | Float (f, source) -> MOk { elem = Expr.FloatLiteral f; source }
+    | ConstantString (cs, source) -> MOk { elem = Expr.StringLiteral cs; source }
     | String (str, source) ->
       (match String.to_list str with
        | [] ->
