@@ -1,14 +1,19 @@
 %parameter <SourceBuilder : Source.BuilderT>
 
 %{
-open! Base
+module Remora = struct end
+(* open! Base *)
 open Ast
 
-type source = Source.t
+let makeSource (start, finish) = SourceBuilder.make ~start ~finish
+let makeAnn elem loc = Source.{ elem; source = makeSource loc }
+let makeAnnSource elem source = Source.{ elem; source }
+
 %}
 
 (* Constants *)
 %token <int> INT
+%token ZERO
 %token <float> FLOAT
 %token <string> STRING
 %token <string> CONSTANT_STRING // TODO: rename to SymbolLiteral or QuotedSymbol
@@ -29,6 +34,7 @@ type source = Source.t
 %token ARRAY
 %token FRAME
 %token LET
+%token LET_STAR
 %token REIFY_SHAPE
 %token REIFY_DIMENSION
 %token RESHAPE
@@ -56,22 +62,24 @@ type source = Source.t
 %token <string> SYMBOL
 (* the rest *)
 %token EOF
-%start <SourceBuilder.source Ast.t> progIntro
+%start <SourceBuilder.source Ast.t> prog
+(* These are not actual start tokens, they are here to parse base env stuff *)
+%start <(SourceBuilder.source, (SourceBuilder.source, (_, Kind.t) Source.annotate) Ast.param) Source.annotate> type_binding
+%start <(SourceBuilder.source, (SourceBuilder.source, (_, Sort.t) Source.annotate) Ast.param) Source.annotate> index_binding
 
-(* Type decls for non terminals *)
-%type <(source, source Ast.t) Source.annotate> expr
 
 %%
-progIntro:
-  | p = prog { p }
-
 prog:
+  | p = body_expr { p }
+
+body_expr:
   | defns = list(define); e = expr; EOF
     {
-      List.fold_right defns ~init:e ~f:(fun { elem = (binding, bound, value); source = sourceLet }
+      let open! Base in
+      List.fold_right defns ~init:e ~f:(fun ({ elem = (binding, bound, value); source = sourceLet }: (_, _) Source.annotate)
                                             acc ->
         let param = Source.{ elem = { binding; bound }
-                           ; source = SourceBuilder.merge binding.source bound.source }
+                           ; source = sourceLet }
         in
         Source.{ elem = Expr.Let { param; value; body = acc }
                ; source = SourceBuilder.merge sourceLet acc.source })
@@ -79,275 +87,272 @@ prog:
 
 expr:
   | constant = const { constant }
-  | var = sym { var }
+  | s = sym { Source.{ elem = Expr.Ref s.elem; source = s.source } }
   | LEFT_PAREN; REIFY_SHAPE; shape = index; RIGHT_PAREN
-    { Source.{ elem = Expr.ReifyShape shape
-             ; source = SourceBuilder.make ~start:$startpos ~finish:$endpos } }
+    { makeAnn (Expr.ReifyShape shape) $loc }
   | LEFT_PAREN; REIFY_DIMENSION; shape = index; RIGHT_PAREN
-    { Source.{ elem = Expr.ReifyDimension shape
-             ; source = SourceBuilder.make ~start:$startpos ~finish:$endpos } }
-  | LEFT_PAREN; LET; LEFT_SQUARE; binding = binding; bound = option(type_ann);
-                                   value = expr; RIGHT_SQUARE;
-                     body = nonempty_list(expr); RIGHT_PAREN
-    { let param = Source.{ elem = { binding; bound }
-                         ; source = SourceBuilder.make ~start:$startpos(binding) ~finish:$endpos(binding) } in
-      Source.{ elem = Expr.Let { param; value; body } } }
-  (* Figure out what we are doing here *)
-  (* | LEFT_PAREN; (ARRAY | FRAME); LEFT_SQUARE; dimensions = list(const_dim); RIGHT_SQUARE; *)
-  (*                      elements = list(); RIGHT_PAREN { ??? } *)
+    { makeAnn (Expr.ReifyDimension shape) $loc }
+  | LEFT_PAREN; RESHAPE; newShape = index; value = expr; RIGHT_PAREN
+    { makeAnn (Expr.Reshape { newShape; value }) $loc }
+  | LEFT_PAREN; LET_STAR; LEFT_PAREN; bindings = list(let_binding); RIGHT_PAREN;
+                          body = body_expr; RIGHT_PAREN
+    { Base.List.fold_right bindings ~init:body
+                           ~f:(fun (param, value) acc ->
+                                makeAnnSource (Expr.Let {param; value; body = acc})
+                                              (SourceBuilder.merge param.source acc.source)) }
+  | LEFT_PAREN; LET; let_binding = let_binding;
+                     body = body_expr; RIGHT_PAREN
+    { let (param, value) = let_binding in
+      makeAnn (Expr.Let { param; value; body }) $loc }
+  (* Empty array/frame *)
+  | LEFT_PAREN; ARRAY; dimensions = dimensions_of_empty; elementType = tpe; RIGHT_PAREN
+    { makeAnn (Expr.EmptyArr { elementType; dimensions }) $loc }
+  | LEFT_PAREN; FRAME; dimensions = dimensions_of_empty; elementType = tpe; RIGHT_PAREN
+    { makeAnn (Expr.EmptyArr { elementType; dimensions }) $loc }
+  (* Non empty array/frame *)
+  | LEFT_PAREN; ARRAY; dimensions = dimensions; elements = ann_ne_list(expr); RIGHT_PAREN
+    { makeAnn ( Expr.Arr { dimensions; elements }) $loc }
+  | LEFT_PAREN; FRAME; dimensions = dimensions; elements = ann_ne_list(expr); RIGHT_PAREN
+    { makeAnn ( Expr.Frame { dimensions; elements }) $loc }
   | LEFT_SQUARE; hd_expr = expr; tl_expr = list(expr); RIGHT_SQUARE
-    { let source = SourceBuilder.make ~start:$startpos ~finish:$endpos in
-      let all : _ NeList.t = hd_expr :: tl_expr in
-      Source.{ elem = Expr.Frame { dimensions = { elem = [ { elem = { elem = NeList.length all; source }
-                                                           ; source }]
-                                                ; source}
-                                 ; elements = hd_expr :: tl_expr }; source } }
+    { let elements : _ NeList.t = hd_expr :: tl_expr in
+      makeAnn (Expr.Frame { dimensions = makeAnn [ makeAnn (NeList.length elements) $loc ] $loc
+                          ; elements = makeAnn elements $loc })
+              $loc }
   | LEFT_PAREN; LIFT; LEFT_SQUARE; indexBinding = index_binding; indexValue = expr; RIGHT_SQUARE;
                       body = body_expr; RIGHT_PAREN
-    { let { binding = indexBinding; bound = sort } = indexBinding.elem in
-      Source.{ elem = Expr.Lift { indexBinding; indexValue; sort; body  }
-             ; source = SourceBuilder.make ~start:$startpos ~finish:$endpos } }
-  /* | LEFT_PAREN; BOX; ; RIGHT_PAREN { ??? } */
-  /* | LEFT_PAREN; BOXES; ...; RIGHT_PAREN { ??? } */
-  /* | LEFT_PAREN; UNBOX; ...; RIGHT_PAREN { ??? } */
-  | LEFT_PAREN; VALUES; elements = list(expr); RIGHT_PAREN
-    { let elements = Source.{ elem = elements
-                            ; source = SourceBuilder.make ~start:$startpos ~finish:$endpos }
-      in
-      Source.{ elem = Expr.TupleExpr elements
-             ; source = SourceBuilder.make ~start:$startpos ~finish:$endpos } }
+    { let Source.{ elem = { binding; bound }; source = _ } = indexBinding in
+      makeAnn (Expr.Lift { indexBinding = binding; indexValue; sort = bound; body }) $loc }
+  | LEFT_PAREN; BOX; LEFT_PAREN; args = list(index_param_binding); RIGHT_PAREN;
+                     elementType = tpe; body = body_expr; RIGHT_PAREN
+    { let params, indices = Base.List.unzip args in
+      let params = makeAnn params $loc in
+      let indices = makeAnn indices $loc in
+      makeAnn (Expr.Boxes { params
+                          ; elementType
+                          ; dimensions = makeAnn [] $loc
+                          ; elements = makeAnn [makeAnn Expr.{indices; body} $loc] $loc })
+              $loc
+     }
+  | LEFT_PAREN; BOXES; LEFT_PAREN; params = ann_list(index_binding); RIGHT_PAREN;
+                       elementType = tpe;
+                       dimensions = dimensions;
+                       elements = ann_list(boxes_element);
+                       RIGHT_PAREN
+    { makeAnn (Expr.Boxes { params; elementType; dimensions; elements }) $loc }
+  | LEFT_PAREN; UNBOX; box = expr;
+                       LEFT_PAREN; valueBinding = binding;
+                                   indexBindings = list(index_binding);
+                       RIGHT_PAREN
+                       body = body_expr;
+    RIGHT_PAREN
+    (* TODO: i don't think this has to be option since in original parser is was always Some *)
+    { let indexBindings =
+        Base.List.map indexBindings
+                      ~f:(fun Source.{ elem = { binding; bound }; source } ->
+                            Source.{ elem = Expr.{ binding; bound = Some bound }; source } ) in
+      let indexBindings = makeAnn indexBindings $loc(indexBindings) in
+      makeAnn (Expr.Unbox { valueBinding; indexBindings; box; body }) $loc
+    }
+  | LEFT_PAREN; VALUES; elements = ann_list(expr); RIGHT_PAREN
+    { makeAnn (Expr.TupleExpr elements) $loc }
   | LEFT_PAREN; position = TUPLE_DEREF; tuple = expr; RIGHT_PAREN
-    { Source.{ elem = Expr.TupleDeref { tuple; position }
-             ; source = SourceBuilder.make ~start:$startpos ~finish:$endpos } }
+    { makeAnn (Expr.TupleDeref { tuple; position }) $loc }
   | e = expr; LEFT_CURLY; typeArgs = list(tpe); RIGHT_CURLY;
               LEFT_CURLY; indexArgs = list(index); RIGHT_CURLY;
-    {
-      let annIndexArgs = Source.{ elem = indexArgs
-                                ; source = SourceBuilder.make ~start:$startpos(indexArgs) ~finish:$endpos(indexArgs) } in
-      let annTypeArgs = Source.{ elem = typeArgs
-                               ; source = SourceBuilder.make ~start:$startpos(typeArgs) ~finish:$endpos(typeArgs) } in
+    { let annIndexArgs = makeAnn indexArgs $loc(indexArgs) in
+      let annTypeArgs = makeAnn typeArgs $loc(typeArgs) in
       let e = match indexArgs with
               | [] -> e
-              | _  -> Source.{ elem = Expr.IndexApplication { iFunc = e; args = annIndexArgs } }
+              | _  -> makeAnn (Expr.IndexApplication { iFunc = e; args = annIndexArgs } )
+                              $loc(indexArgs)
       in
       match typeArgs with
-        | [] -> e
-        | _  -> Source.{ elem = Expr.TypeApplication { tFunc = e; args = annTypeArgs } }
-    }
-  | LEFT_PAREN; func = expr; args = list(expr); RIGHT_PAREN
-  | LEFT_PAREN; func = keyword_as_ref; args = list(expr); RIGHT_PAREN
-    {
-      let args = Source.{ elem = args
-                        ; source = SourceBuilder.make ~start:$startpos(args) ~finish:$endpos(args) } in
-      Source.{ elem = Expr.TermApplication { func; args }
-             ; source = SourceBuilder.make ~start:$startpos ~finish:$endpos }
-    }
-  | LEFT_PAREN; T_APP; tFunc = expr; args = list(tpe); RIGHT_PAREN
-    { let args = Source.{ elem = args
-                        ; source = SourceBuilder.make ~start:$startpos(args) ~finish:$endpos(args) }
-      in
-      Source.{ elem = Expr.TypeApplication { tFunc; args } } }
-  | LEFT_PAREN; I_APP; iFunc = expr; args = list(index); RIGHT_PAREN
-    { let args = Source.{ elem = args
-                        ; source = SourceBuilder.make ~start:$startpos(args) ~finish:$endpos(args) }
-      in
-      Source.{ elem = Expr.IndexApplication { iFunc; args } } }
-  | LEFT_PAREN; LAMBDA; LEFT_PAREN; params = list(param_binding); RIGHT_PAREN;
-                        retType = option(type_ann);
+      | [] -> e
+      | _  -> makeAnn (Expr.TypeApplication { tFunc = e; args = annTypeArgs })
+                      $loc(typeArgs) }
+  | LEFT_PAREN; func = expr; args = ann_list(expr); RIGHT_PAREN
+  | LEFT_PAREN; func = keyword_as_ref; args = ann_list(expr); RIGHT_PAREN
+    { makeAnn (Expr.TermApplication { func; args }) $loc }
+  | LEFT_PAREN; T_APP; tFunc = expr; args = ann_list(tpe); RIGHT_PAREN
+    { makeAnn (Expr.TypeApplication { tFunc; args }) $loc }
+  | LEFT_PAREN; I_APP; iFunc = expr; args = ann_list(index); RIGHT_PAREN
+    { makeAnn (Expr.IndexApplication { iFunc; args }) $loc }
+  | LEFT_PAREN; LAMBDA; LEFT_PAREN; params = ann_list(param_binding); RIGHT_PAREN;
+                        returnTypeOpt = option(type_ann);
                         body = body_expr; RIGHT_PAREN
-    { let params = Source.{ elem = params
-                          ; source = SourceBuilder.make ~start:$startpos(params) ~finish:$endpos(params) } in
-      Source.{ elem = Expr.TermLambda { params; body; returnTypeOpt = retType }
-             ; source = SourceBuilder.make ~start:$startpos ~finish:$endpos } }
-  | LEFT_PAREN; T_LAMBDA; LEFT_PAREN; params = list(type_binding); RIGHT_PAREN;
+    { makeAnn (Expr.TermLambda { params; body; returnTypeOpt }) $loc }
+  | LEFT_PAREN; T_LAMBDA; LEFT_PAREN; params = ann_list(type_binding); RIGHT_PAREN;
                           body = body_expr; RIGHT_PAREN
-    { let params = Source.{ elem = params
-                          ; source = SourceBuilder.make ~start:$startpos(params) ~finish:$endpos(params) } in
-      Source.{ elem = Expr.TypeLambda { params; body }
-             ; source = SourceBuilder.make ~start:$startpos ~finish:$endpos } }
-  | LEFT_PAREN; I_LAMBDA; LEFT_PAREN; params = list(index_binding); RIGHT_PAREN;
+    { makeAnn (Expr.TypeLambda { params; body }) $loc }
+  | LEFT_PAREN; I_LAMBDA; LEFT_PAREN; params = ann_list(index_binding); RIGHT_PAREN;
                           body = body_expr; RIGHT_PAREN
-    { let params = Source.{ elem = params
-                          ; source = SourceBuilder.make ~start:$startpos(params) ~finish:$endpos(params) } in
-      Source.{ elem = Expr.IndexLambda { params; body }
-             ; source = SourceBuilder.make ~start:$startpos ~finish:$endpos } }
+    { makeAnn (Expr.IndexLambda { params; body }) $loc }
+
+let_binding:
+  | LEFT_SQUARE; binding = binding; bound = option(type_ann); value = expr; RIGHT_SQUARE
+    { let param = makeAnn { binding; bound } $loc in
+      param, value }
+
+boxes_element:
+  | LEFT_PAREN; LEFT_PAREN; indices = ann_list(index); RIGHT_PAREN; body = body_expr; RIGHT_PAREN
+    { makeAnn Expr.{indices; body} $loc }
+
+dimensions_of_empty:
+  | LEFT_SQUARE; left = list(const_dim); z = ZERO; right = list(const_dim); RIGHT_SQUARE
+    { let _ = z in makeAnn (Base.List.append left ((makeAnn 0 $loc(z)) :: right)) $loc }
+
+dimensions:
+  | LEFT_SQUARE; dims = ann_list(const_dim); RIGHT_SQUARE { dims }
 
 const:
-  | i = INT    { Source.{ elem = IntLiteral i; source = SourceBuilder.make ~start:$startpos ~finish:$endpos } }
-  | f = FLOAT  { Source.{ elem = FloatLiteral f; source = SourceBuilder.make ~start:$startpos ~finish:$endpos } }
-  | TRUE   { Source.{ elem = BooleanLiteral true; source = SourceBuilder.make ~start:$startpos ~finish:$endpos } }
-  | FALSE  { Source.{ elem = BooleanLiteral false; source = SourceBuilder.make ~start:$startpos ~finish:$endpos } }
-  | cs = CONSTANT_STRING { Source.{ elem = StringLiteral cs
-                                  ; source = SourceBuilder.make ~start:$startpos ~finish:$endpos } }
+  | ZERO      { makeAnn (Expr.IntLiteral 0) $loc }
+  | i = INT   { makeAnn (Expr.IntLiteral i) $loc }
+  | f = FLOAT { makeAnn (Expr.FloatLiteral f) $loc }
+  | TRUE      { makeAnn (Expr.BooleanLiteral true) $loc }
+  | FALSE     { makeAnn (Expr.BooleanLiteral false) $loc }
+  | cs = CONSTANT_STRING { makeAnn (Expr.StringLiteral cs) $loc }
   | s = STRING
-    { let source = SourceBuilder.make ~start:$startpos ~finish:$endpos in
+    { let open! Base in
       match String.to_list s with
-        | [] -> { elem = Expr.EmptyArr { dimensions = { elem = [ { elem = 0; source } ]; source }
-                                       ; elementType = { elem = Type.Ref "char"; source } }
-                ; source }
-        | hd :: tl ->
-           Source.{ elem = Expr.Arr { elements = { elem = NeList.map (hd :: tl) ~f:(fun c -> Source.{ elem = Expr.CharacterLiteral c; source }) }
-                                    ; dimensions = { elem = [ { elem = List.length (hd :: tl); source } ]; source } }
-                  ; source } }
+      | [] -> makeAnn (Expr.EmptyArr { dimensions = makeAnn [ makeAnn 0 $loc ] $loc
+                                     ; elementType = makeAnn (Ast.Type.Ref "char") $loc } )
+                      $loc
+      | hd :: tl ->
+         let elements = NeList.map (hd :: tl) ~f:(fun c -> makeAnn (Expr.CharacterLiteral c) $loc) in
+         makeAnn (Expr.Arr { elements = makeAnn elements $loc
+                           ; dimensions = makeAnn [makeAnn (NeList.length elements) $loc] $loc })
+                 $loc }
 
 const_dim:
-  | dim = INT { Source.{ elem = dim
-                       ; source = SourceBuilder.make ~start:$startpos ~finish:$endpos } }
-
-binding:
-  | id = SYMBOL
-    { if String.is_prefix id ~prefix:"@"
-      then error
-      else Source.{ elem = id
-                  ; source = SourceBuilder.make ~start:$startpos ~finish:$endpos } }
+  | dim = INT { makeAnn dim $loc }
 
 index:
-  | i = INT     { Source.{ elem = Index.Dimension i
-                         ; source = SourceBuilder.make ~start:$startpos ~finish:$endpos } }
-  | id = SYMBOL { Source.{ elem = Index.Ref id
-                         ; source = SourceBuilder.make ~start:$startpos ~finish:$endpos } }
+  | ZERO        { makeAnn (Index.Dimension 0) $loc }
+  | i = INT     { makeAnn (Index.Dimension i) $loc }
+  | id = SYMBOL { makeAnn (Index.Ref id) $loc }
   | LEFT_PAREN; PLUS; indices = list(index); RIGHT_PAREN
-    { Source.{ elem = Index.Add indices
-             ; source = SourceBuilder.make ~start:$startpos ~finish:$endpos } }
+    { makeAnn (Index.Add indices) $loc }
   | LEFT_PAREN; APPEND; indices = list(index); RIGHT_PAREN
-    { Source.{ elem = Index.Append indices
-             ; source = SourceBuilder.make ~start:$startpos ~finish:$endpos } }
+    { makeAnn (Index.Append indices) $loc }
   | LEFT_PAREN; SHAPE; indices = list(index); RIGHT_PAREN
-    { Source.{ elem = Index.Shape indices
-             ; source = SourceBuilder.make ~start:$startpos ~finish:$endpos } }
+    { makeAnn (Index.Shape indices) $loc }
   | LEFT_SQUARE; indices = list(index); RIGHT_SQUARE
-    { Source.{ elem = Index.Slice indices;
-               source = SourceBuilder.make ~start:$startpos ~finish:$endpos } }
+    { makeAnn (Index.Slice indices) $loc }
 
 tpe:
-  | id = SYMBOL { Source.{ elem = Type.Ref id
-                         ; source = SourceBuilder.make ~start:$startpos ~finish:$endpos } }
-  | LEFT_PAREN; TYPE_ARR; elementType = tpe; shape = index; RIGHT_PAREN
-    { Source.{ elem = Type.Arr { element = elementType; shape }
-             ; source = SourceBuilder.make ~start:$startpos ~finish:$endpos } }
-  | LEFT_PAREN; RIGHT_ARROW; LEFT_PAREN; parameters = list(tpe); RIGHT_PAREN;
+  | id = SYMBOL { makeAnn (Type.Ref id) $loc }
+  | LEFT_PAREN; TYPE_ARR; element = tpe; shape = index; RIGHT_PAREN
+    { makeAnn (Type.Arr { element; shape }) $loc }
+  | LEFT_PAREN; RIGHT_ARROW; LEFT_PAREN; parameters = ann_list(tpe); RIGHT_PAREN;
                              return = tpe; RIGHT_PAREN
-    { Source.{ elem = Type.Func { parameters; return }
-             ; source = SourceBuilder.make ~start:$startpos ~finish:$endpos } }
-  | LEFT_PAREN; TYPE_FORALL; LEFT_PAREN; parameters = list(type_binding); RIGHT_PAREN;
+    { makeAnn (Type.Func { parameters; return }) $loc }
+  | LEFT_PAREN; TYPE_FORALL; LEFT_PAREN; parameters = ann_list(type_binding); RIGHT_PAREN;
                                          body = tpe; RIGHT_PAREN
-    { Source.{ elem = Type.Forall ( Type.{ parameters; body } )
-             ; source = SourceBuilder.make ~start:$startpos ~finish:$endpos } }
-  | LEFT_PAREN; TYPE_PI; LEFT_PAREN; paramenters = list(index_binding); RIGHT_PAREN;
+    { makeAnn (Type.Forall ( Type.{ parameters; body } )) $loc }
+  | LEFT_PAREN; TYPE_PI; LEFT_PAREN; parameters = ann_list(index_binding); RIGHT_PAREN;
                                      body = tpe; RIGHT_PAREN
-    { Source.{ elem = Type.Pi ( Type.{ parameters; body } )
-             ; source = SourceBuilder.make ~start:$startpos ~finish:$endpos } }
-  | LEFT_PAREN; TYPE_SIGMA; LEFT_PAREN; paramenters = list(index_binding); RIGHT_PAREN;
+    { makeAnn (Type.Pi ( Type.{ parameters; body } )) $loc }
+  | LEFT_PAREN; TYPE_SIGMA; LEFT_PAREN; parameters = ann_list(index_binding); RIGHT_PAREN;
                                         body = tpe; RIGHT_PAREN
-    { Source.{ elem = Type.Sigma ( Type.{ parameters; body } )
-             ; source = SourceBuilder.make ~start:$startpos ~finish:$endpos } }
-  | LEFT_PAREN; TYPE_VALUES; tuple = list(tpe); RIGHT_PAREN
-    { Source.{ elem = Type.Tuple tuple
-             ; source = SourceBuilder.make ~start:$startpos ~finish:$endpos } }
-  | LEFT_SQUARE; elementType = tpe; shapeElements = list(index); RIGHT_SQUARE
-    { Source.{ elem = Type.Arr { element = elementType
-                               ; shape = Index.Slice shapeElements }
-             ; source = SourceBuilder.make ~start:$startpos ~finish:$endpos } }
+    { makeAnn (Type.Sigma (Type.{ parameters; body })) $loc }
+  | LEFT_PAREN; TYPE_VALUES; tuple = ann_list(tpe); RIGHT_PAREN
+    { makeAnn (Type.Tuple tuple) $loc }
+  | LEFT_SQUARE; element = tpe; shapeElements = list(index); RIGHT_SQUARE
+    { let shape = makeAnn (Index.Slice shapeElements) $loc(shapeElements) in
+      makeAnn (Type.Arr { element; shape }) $loc }
 
 param_binding:
   | LEFT_PAREN; binding = binding; bound = tpe; RIGHT_PAREN
-    { Source.{ elem = { binding; bound }
-             ; source = SourceBuilder.make ~start:$startpos ~finish:$endpos } }
+    { makeAnn { binding; bound } $loc }
+
+index_param_binding:
+  | LEFT_PAREN; binding = index_binding; index = index; RIGHT_PAREN
+    { binding, index }
+
+binding:
+  | id = SYMBOL
+    { if Base.String.is_prefix id ~prefix:"@"
+      then raise (Unreachable.Error "Variable binding should not start with @")
+      else makeAnn id $loc }
 
 type_binding:
-  | binding = sym
-    {
-      let source = SourceBuilder.make ~start:$startpos ~finish:$endpos in
-      let bound = if String.is_prefix id ~prefix:"@" then Kind.Array else Kind.Atom in
-      let bound = Source.{ elem = bound; source } in
-      Source.{ elem = { binding; bound }; source }
-    }
+  | id = SYMBOL
+    { let binding = makeAnn id $loc in
+      let bound = if Base.String.is_prefix id ~prefix:"@"
+                  then Kind.Array
+                  else Kind.Atom in
+      let bound = makeAnn bound $loc in
+      makeAnn { binding; bound } $loc }
 
 index_binding:
-  | binding = sym
-    {
-      let source = SourceBuilder.make ~start:$startpos ~finish:$endpos in
-      let bound = if String.is_prefix id ~prefix:"@" then Sort.Shape else Sort.Dim in
-      let bound = Source.{ elem = bound; source } in
-      Source.{ elem = { binding; bound }; source }
-    }
+  | id = SYMBOL
+    { let binding = makeAnn id $loc in
+      let bound = if Base.String.is_prefix id ~prefix:"@"
+                  then Sort.Shape
+                  else Sort.Dim in
+      let bound = makeAnn bound $loc in
+      makeAnn { binding; bound } $loc }
 
 define:
   | LEFT_PAREN; DEFINE; binding = sym;
                         bound = option(type_ann);
                         value = expr; RIGHT_PAREN
-    { binding, bound, value }
+    { makeAnn (binding, bound, value) $loc }
   | LEFT_PAREN; DEFINE; LEFT_PAREN; func_name = sym;
-                                    iAndTParams = option(fn_t_and_i_decl);
-                                    params = list(fn_decl_binding)
+                                    params = ann_list(fn_decl_binding)
                                     RIGHT_PAREN;
                         returnTypeOpt = option(type_ann);
                         body = body_expr; RIGHT_PAREN
-    {
-      let source = SourceBuilder.make ~start:$startpos ~finish:$endpos in
-      let body = Source.{ elem = Expr.TermLambda { params; body; returnTypeOpt }
-                        ; source }
+    { let body = makeAnn (Expr.TermLambda { params; body; returnTypeOpt }) $loc in
+      makeAnn (func_name, None, body) $loc }
+  | LEFT_PAREN; DEFINE; LEFT_PAREN; func_name = sym;
+                                    tParams = fn_t_decl;
+                                    iParams = fn_i_decl;
+                                    params = ann_list(fn_decl_binding)
+                                    RIGHT_PAREN;
+                        returnTypeOpt = option(type_ann);
+                        body = body_expr; RIGHT_PAREN
+    { let body = makeAnn (Expr.TermLambda { params; body; returnTypeOpt }) $loc in
+      let body = match tParams with
+        | Source.{ elem = []; source = _ } -> body
+        | _ -> makeAnn (Expr.TypeLambda { params = tParams; body }) $loc
       in
-      match iAndTParams with
-        | None -> func_name, None, body
-        | Some iAndTParams ->
-          let iParams, tParams = iAndTParams in
-          let body = match tParams with
-            | [] -> body
-            | _  -> Source.{ elem = Expr.TypeLambda { params = tParams; body }
-                           ; source }
-          in
-          let body = match iParams with
-            | [] -> body
-            | _  -> Source.{ elem = Expr.IndexLambda { params = iParams; body }
-                           ; source }
-          in
-          (func_name, None, body)
-    }
+      let body = match iParams with
+        | Source.{ elem = []; source = _ } -> body
+        | _ -> makeAnn (Expr.IndexLambda { params = iParams; body }) $loc
+      in
+      makeAnn (func_name, None, body) $loc }
 
-fn_t_and_i_decl:
-  | LEFT_CURLY; tParams = list(type_binding); RIGHT_CURLY;
-    LEFT_CURLY; iParams = list(index_binding); RIGHT_CURLY
-    {
-      (Source.{ elem = tParams
-             ; source = SourceBuilder.make ~start:$startpos(tParams) ~finish:$endpos(tParams) },
-      Source.{ elem = iParams
-             ; source = SourceBuilder.make ~start:$startpos(iParams) ~finish:$endpos(iParams) })
-    }
+fn_t_decl:
+  | LEFT_CURLY; tParams = ann_list(type_binding); RIGHT_CURLY { tParams }
+
+fn_i_decl:
+  | LEFT_CURLY; iParams = ann_list(index_binding); RIGHT_CURLY { iParams }
 
 fn_decl_binding:
-  | LEFT_SQUARE; variable = sym; tpe = tpe; RIGHT_SQUARE
-    { variable, tpe }
+  | LEFT_SQUARE; binding = sym; bound = tpe; RIGHT_SQUARE
+    { makeAnn { binding; bound } $loc }
 
 keyword_as_ref:
-  | PLUS { Source.{ elem = Expr.Ref "+"
-                  ; source = SourceBuilder.make ~start:$startpos ~finish:$endpos } }
-  | APPEND { Source.{ elem = Expr.Ref "++"
-                    ; source = SourceBuilder.make ~start:$startpos ~finish:$endpos } }
-  | TYPE_PI { Source.{ elem = Expr.Ref "Pi"
-                     ; source = SourceBuilder.make ~start:$startpos ~finish:$endpos } }
-  | TYPE_SIGMA { Source.{ elem = Expr.Ref "Sigma"
-                        ; source = SourceBuilder.make ~start:$startpos ~finish:$endpos } }
-  | TYPE_ARR { Source.{ elem = Expr.Ref "Arr"
-                      ; source = SourceBuilder.make ~start:$startpos ~finish:$endpos } }
-  | TYPE_FORALL { Source.{ elem = Expr.Ref "Forall"
-                         ; source = SourceBuilder.make ~start:$startpos ~finish:$endpos } }
-  | TYPE_VALUES { Source.{ elem = Expr.Ref "Values"
-                         ; source = SourceBuilder.make ~start:$startpos ~finish:$endpos } }
-  | SHAPE { Source.{ elem = Expr.Ref "shape"
-                   ; source = SourceBuilder.make ~start:$startpos ~finish:$endpos } }
+  | PLUS        { makeAnn (Expr.Ref "+") $loc }
+  | APPEND      { makeAnn (Expr.Ref "++") $loc }
+  | TYPE_PI     { makeAnn (Expr.Ref "Pi") $loc }
+  | TYPE_SIGMA  { makeAnn (Expr.Ref "Sigma") $loc }
+  | TYPE_ARR    { makeAnn (Expr.Ref "Arr") $loc }
+  | TYPE_FORALL { makeAnn (Expr.Ref "Forall") $loc }
+  | TYPE_VALUES { makeAnn (Expr.Ref "Values") $loc }
+  | SHAPE       { makeAnn (Expr.Ref "shape") $loc }
 
 sym:
-  | id = SYMBOL { Source.{ elem = id
-                         ; source = SourceBuilder.make ~start:$startpos ~finish:$endpos } }
+  | id = SYMBOL { makeAnn id $loc }
 
 type_ann:
-  | COLON; tpe = tpe
-           { Source.{ elem = tpe
-                    ; source = SourceBuilder.make ~start:$startpos ~finish:$endpos } }
+  | COLON; tpe = tpe { tpe }
 
-body_expr:
-  | hd = expr; tl = list(expr)
-    { let body : _ NeList.t = hd :: tl in
-      Source.{ elem = body
-             ; source = SourceBuilder.make ~start:$startpos(hd) ~finish:$endpos(tl) } }
+%inline ann_ne_list(X):
+  | xs = nonempty_list(X)
+    { makeAnn (Base.Option.value_exn (NeList.of_list xs)) $loc(xs) }
+
+%inline ann_list(X):
+  | xs = list(X) { makeAnn xs $loc(xs) }

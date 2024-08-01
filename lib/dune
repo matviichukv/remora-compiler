@@ -1,5 +1,6 @@
 (menhir
- (modules EsexpParser RemoraParser))
+ (modules EsexpParser RemoraParser)
+ (flags :standard \ --explain))
 
 (ocamllex EsexpLexer)
 
