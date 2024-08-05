@@ -169,8 +169,10 @@ module Expr = struct
         { name : string
         ; libName : string
         ; libTypeParams : Type.atom list
-        ; argCount : int
-        ; type' : Type.atom
+        ; typeParams : Kind.t param list
+        ; indexParams : Sort.t param list
+        ; argTypes : Type.array list
+        ; retType : Type.array
         }
   [@@deriving compare, sexp, equal]
 

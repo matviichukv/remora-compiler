@@ -66,28 +66,25 @@ let makeAnnSource elem source = Source.{ elem; source }
 (* These are not actual start tokens, they are here to parse base env stuff *)
 %start <(SourceBuilder.source, (SourceBuilder.source, (_, Kind.t) Source.annotate) Ast.param) Source.annotate> type_binding
 %start <(SourceBuilder.source, (SourceBuilder.source, (_, Sort.t) Source.annotate) Ast.param) Source.annotate> index_binding
-
+%start <SourceBuilder.source Ast.Type.t> tpe
+%start <SourceBuilder.source Ast.Index.t> index
 
 %%
 prog:
-  | p = body_expr { p }
+  | p = body_expr; EOF { p }
 
 body_expr:
-  | defns = list(define); e = expr; EOF
-    {
-      let open! Base in
-      List.fold_right defns ~init:e ~f:(fun ({ elem = (binding, bound, value); source = sourceLet }: (_, _) Source.annotate)
-                                            acc ->
-        let param = Source.{ elem = { binding; bound }
-                           ; source = sourceLet }
-        in
-        Source.{ elem = Expr.Let { param; value; body = acc }
-               ; source = SourceBuilder.merge sourceLet acc.source })
-    }
+  | define = define; body = body_expr
+    { let Source.{ elem = (binding, bound, value); source = sourceDefine } = define in
+      let param = makeAnn { binding; bound } $loc(define) in
+      makeAnnSource (Expr.Let { param; value; body })
+                    (SourceBuilder.merge sourceDefine body.source) }
+   | e = expr { e }
 
 expr:
   | constant = const { constant }
   | s = sym { Source.{ elem = Expr.Ref s.elem; source = s.source } }
+  | k = keyword_as_ref { k }
   | LEFT_PAREN; REIFY_SHAPE; shape = index; RIGHT_PAREN
     { makeAnn (Expr.ReifyShape shape) $loc }
   | LEFT_PAREN; REIFY_DIMENSION; shape = index; RIGHT_PAREN
@@ -159,7 +156,9 @@ expr:
   | LEFT_PAREN; position = TUPLE_DEREF; tuple = expr; RIGHT_PAREN
     { makeAnn (Expr.TupleDeref { tuple; position }) $loc }
   | e = expr; LEFT_CURLY; typeArgs = list(tpe); RIGHT_CURLY;
-              LEFT_CURLY; indexArgs = list(index); RIGHT_CURLY;
+              LEFT_CURLY; indexArgs = list(index); RIGHT_CURLY
+  | e = expr; LEFT_CURLY; typeArgs = list(tpe); BAR
+                        ; indexArgs = list(index); RIGHT_CURLY
     { let annIndexArgs = makeAnn indexArgs $loc(indexArgs) in
       let annTypeArgs = makeAnn typeArgs $loc(typeArgs) in
       let e = match indexArgs with
@@ -172,7 +171,7 @@ expr:
       | _  -> makeAnn (Expr.TypeApplication { tFunc = e; args = annTypeArgs })
                       $loc(typeArgs) }
   | LEFT_PAREN; func = expr; args = ann_list(expr); RIGHT_PAREN
-  | LEFT_PAREN; func = keyword_as_ref; args = ann_list(expr); RIGHT_PAREN
+  /* | LEFT_PAREN; func = keyword_as_ref; args = ann_list(expr); RIGHT_PAREN */
     { makeAnn (Expr.TermApplication { func; args }) $loc }
   | LEFT_PAREN; T_APP; tFunc = expr; args = ann_list(tpe); RIGHT_PAREN
     { makeAnn (Expr.TypeApplication { tFunc; args }) $loc }
@@ -263,7 +262,7 @@ tpe:
       makeAnn (Type.Arr { element; shape }) $loc }
 
 param_binding:
-  | LEFT_PAREN; binding = binding; bound = tpe; RIGHT_PAREN
+  | LEFT_SQUARE; binding = binding; bound = tpe; RIGHT_SQUARE
     { makeAnn { binding; bound } $loc }
 
 index_param_binding:
@@ -309,6 +308,26 @@ define:
   | LEFT_PAREN; DEFINE; LEFT_PAREN; func_name = sym;
                                     tParams = fn_t_decl;
                                     iParams = fn_i_decl;
+                                    params = ann_list(fn_decl_binding)
+                                    RIGHT_PAREN;
+                        returnTypeOpt = option(type_ann);
+                        body = body_expr; RIGHT_PAREN
+    { let body = makeAnn (Expr.TermLambda { params; body; returnTypeOpt }) $loc in
+      let body = match tParams with
+        | Source.{ elem = []; source = _ } -> body
+        | _ -> makeAnn (Expr.TypeLambda { params = tParams; body }) $loc
+      in
+      let body = match iParams with
+        | Source.{ elem = []; source = _ } -> body
+        | _ -> makeAnn (Expr.IndexLambda { params = iParams; body }) $loc
+      in
+      makeAnn (func_name, None, body) $loc }
+  | LEFT_PAREN; DEFINE; LEFT_PAREN; func_name = sym;
+                                    LEFT_CURLY;
+                                    tParams = ann_list(type_binding);
+                                    BAR;
+                                    iParams = ann_list(index_binding);
+                                    RIGHT_CURLY;
                                     params = ann_list(fn_decl_binding)
                                     RIGHT_PAREN;
                         returnTypeOpt = option(type_ann);

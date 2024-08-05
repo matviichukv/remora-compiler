@@ -358,6 +358,20 @@ let rec nestArray : Nucleus.Expr.array -> (Nested.t, _) NestState.u =
     and indexArg = nestArray indexArg in
     let type' = nestTypeArray type' in
     ContiguousSubArray { arrayArg; indexArg; originalShape; resultShape; type' }
+  | ArrayPrimitive
+      (IOFun { name; libName; libTypeParams; argTypes; retType; args; type' }) ->
+    let%map args = List.map args ~f:nestAtom |> NestState.all in
+    let type' = nestTypeArray type' in
+    let libTypeParams = List.map libTypeParams ~f:nestTypeAtom in
+    let nestType (type' : Nucleus.Type.t) =
+      match type' with
+      | Array arr -> nestTypeArray arr
+      | Atom atom -> nestTypeAtom atom
+    in
+    let argTypes = List.map argTypes ~f:nestType in
+    let retType = nestType retType in
+    ScalarPrimitive
+      { op = IOFun { name; libName; libTypeParams; argTypes; retType }; args; type' }
 
 and makeMap frameShape args =
   let open NestState.Let_syntax in
@@ -450,10 +464,11 @@ and nestScalarOp : Nucleus.Expr.scalarOp -> (Nested.Expr.scalarOp, _) NestState.
     let retType = nestType retType in
     let argTypes = List.map argTypes ~f:(fun a -> nestType a) in
     return @@ LibFun { name; libName; argTypes; retType }
-  | IOFun { name; libName; argTypes; retType } ->
+  | ScalarIOFun { name; libName; libTypeParams; argTypes; retType } ->
     let retType = nestType retType in
     let argTypes = List.map argTypes ~f:(fun a -> nestType a) in
-    return @@ LibFun { name; libName; argTypes; retType }
+    let libTypeParams = List.map libTypeParams ~f:(fun p -> nestTypeAtom p) in
+    return @@ IOFun { name; libName; libTypeParams; argTypes; retType }
 ;;
 
 let nest (prog : Nucleus.t) : (CompilerState.state, Nested.t, _) State.t =

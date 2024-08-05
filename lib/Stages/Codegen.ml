@@ -1298,14 +1298,22 @@ and genExpr
          args |> List.map ~f:(genExpr ~hostOrDevice ~store:false) |> GenState.all
        in
        storeIfRequested ~name:[%string "%{name}Result"] @@ Cx.callBuiltin libName args
-     | IOFun { name = _; libName; argTypes = _; retType; resultMem } ->
+     | IOFun { name = _; libName; libTypeParams; argTypes = _; retType; resultMem } ->
        let%bind args =
          args |> List.map ~f:(genExpr ~hostOrDevice ~store:false) |> GenState.all
+       in
+       let%bind typeParams =
+         libTypeParams |> List.map ~f:(genType ?wrapInPtr:(Some false)) |> GenState.all
+       in
+       let typeParams =
+         match typeParams with
+         | [] -> None
+         | list -> Some list
        in
        (match resultMem with
         | None ->
           (* Most likely an output function, just call builtin and call it a day *)
-          return @@ Cx.callBuiltin libName args
+          return @@ Cx.callBuiltin ?typeArgs:typeParams libName args
         | Some resultMem ->
           let size =
             match retType with
@@ -1316,7 +1324,11 @@ and genExpr
           in
           let%bind mem = genMem ~store:false resultMem in
           let fullArgs = List.append args [ mem; size ] in
-          return @@ Cx.callBuiltin libName fullArgs)
+          let%bind () =
+            GenState.write
+            @@ C.Eval (Cx.callBuiltin ?typeArgs:typeParams libName fullArgs)
+          in
+          return mem)
      | If ->
        let cond, then', else' =
          match args with
@@ -3745,7 +3757,13 @@ let genMainBlock (deviceInfo : DeviceInfo.t) (main : withCaptures) =
     GenState.write
     @@ C.Eval (Cx.callBuiltin "cudaEventSynchronize" [ VarRef (StrName "stop") ])
   in
-  let%bind () = genPrint (Expr.type' main) cVal in
+  let mainType = Expr.type' main in
+  mainType
+  |> [%sexp_of: Type.t]
+  |> Sexp.to_string_hum
+  |> Printf.sprintf "Type of main: %s"
+  |> Stdio.prerr_endline;
+  let%bind () = genPrint mainType cVal in
   let%bind () =
     GenState.write
     @@ C.Define

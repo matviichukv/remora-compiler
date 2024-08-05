@@ -619,8 +619,8 @@ let convertScalarOp (op : Nested.Expr.scalarOp) : Corn.Expr.scalarOp =
   | If -> If
   | LibFun { name; libName; argTypes; retType } ->
     LibFun { name; libName; argTypes; retType }
-  | IOFun { name; libName; argTypes; retType } ->
-    IOFun { name; libName; argTypes; retType }
+  | IOFun { name; libName; libTypeParams; argTypes; retType } ->
+    IOFun { name; libName; libTypeParams; argTypes; retType }
 ;;
 
 let rec rewriteWithPar (expr : Nested.t) loopBlockParTable : Corn.t =

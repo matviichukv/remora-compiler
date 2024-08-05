@@ -33,10 +33,23 @@ open! Base
 module type S = sig
   type source
   type error = string * source
-  type result = (source Ast.t, error) MResult.t
+  type 't result = ('t, error) MResult.t
 
-  val parseString : string -> result
-  val parseFile : string -> result
+  val parseString : string -> source Ast.t result
+  val parseFile : string -> source Ast.t result
+
+  val parseTypeBinding
+    :  string
+    -> (source, (source, (source, Kind.t) Source.annotate) Ast.param) Source.annotate
+       result
+
+  val parseIndexBinding
+    :  string
+    -> (source, (source, (source, Sort.t) Source.annotate) Ast.param) Source.annotate
+       result
+
+  val parseType : string -> source Ast.Type.t result
+  val parseIndex : string -> source Ast.Index.t result
 end
 
 module Make (SourceBuilder : Source.BuilderT) : S with type source = SourceBuilder.source

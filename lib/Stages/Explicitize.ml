@@ -77,8 +77,17 @@ let rec funcParamNamesArray env : Typed.Expr.array -> string list option = funct
           | If -> [ "if-cond"; "then-branch"; "else-branch" ]
           | LibFun { name; libName = _; argTypes; retType = _ } ->
             List.init (List.length argTypes) ~f:(fun i -> [%string "%{name}-arg%{i#Int}"])
-          | IOFun { name; libName = _; libTypeParams = _; argCount; type' = _ } ->
-            List.init argCount ~f:(fun i -> [%string "io-%{name}-arg%{i#Int}"]))
+          | IOFun
+              { name
+              ; libName = _
+              ; libTypeParams = _
+              ; typeParams = _
+              ; indexParams = _
+              ; argTypes
+              ; retType = _
+              } ->
+            List.init (List.length argTypes) ~f:(fun i ->
+              [%string "io-%{name}-arg%{i#Int}"]))
      | Val _ -> None)
 
 and funcParamNamesTuple env : Typed.Expr.tuple -> string list option = function

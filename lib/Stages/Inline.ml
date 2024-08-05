@@ -884,50 +884,105 @@ and inlineTermApplication indexEnv appStack termApplication =
                   Nucleus.Type.Array (inlineArrayTypeWithStack [] argType))
             ; retType = Nucleus.Type.Array (inlineArrayTypeWithStack appStack retType)
             }
-     | IOFun { name; libName; libTypeParams; argCount; type' = funType } ->
+     | IOFun { name; libName; libTypeParams; typeParams; indexParams; argTypes; retType }
+       ->
        let%bind _ = InlineState.getEnv () in
-       let _ = libTypeParams in
-       let rec partialInline appStack (type' : Explicit.Type.atom) =
-         match appStack, type' with
-         | TypeApp types :: rest, Forall { parameters; body } ->
-           let typeSubMap =
-             List.map2_exn types parameters ~f:(fun type' param -> param.binding, type')
-             |> Map.of_alist_exn (module Identifier)
-           in
-           let newType = Explicit.Substitute.Type.subTypesIntoArray typeSubMap body in
-           partialInlineArray rest newType
-         | IndexApp indices :: rest, Pi { parameters; body } ->
-           let indicesTypeMap =
-             List.map2_exn indices parameters ~f:(fun index param -> param.binding, index)
-             |> Map.of_alist_exn (module Identifier)
-           in
-           let newType =
-             Explicit.Substitute.Type.subIndicesIntoArray indicesTypeMap body
-           in
-           partialInlineArray rest newType
-         | [], Func { parameters; return } ->
-           let parameters =
-             List.map
-               ~f:(fun p -> Nucleus.Type.Array (inlineArrayTypeWithStack [] p))
-               parameters
-           in
-           let return = Nucleus.Type.Array (inlineArrayTypeWithStack [] return) in
-           Nucleus.Expr.IOFun { name; libName; argTypes = parameters; retType = return }
-         | stack, type' ->
-           raise
-             (Unreachable.Error
-                (Printf.sprintf
-                   "Got %s when trying to do an application %s"
-                   (Sexp.to_string_hum ([%sexp_of: application list] stack))
-                   (Sexp.to_string_hum ([%sexp_of: Explicit.Type.atom] type'))))
-       and partialInlineArray appStack (type' : Explicit.Type.array) =
-         match type' with
-         | Type.ArrayRef _ ->
-           raise (Unreachable.Error "There should be no refs left after inlining")
-         | Type.Arr { element; shape = _ } -> partialInline appStack element
+       (* let argCount = List.length argTypes in *)
+       (* let globalAppStack = appStack in *)
+       let appStack = primitive.appStack in
+       let argTypes, retType, appStack =
+         if List.is_empty indexParams
+         then argTypes, retType, appStack
+         else (
+           match appStack with
+           | IndexApp indices :: rest ->
+             let indexSubMap =
+               List.map2_exn indices indexParams ~f:(fun index param ->
+                 param.binding, index)
+               |> Map.of_alist_exn (module Identifier)
+             in
+             let retType =
+               Explicit.Substitute.Type.subIndicesIntoArray indexSubMap retType
+             in
+             let argTypes =
+               argTypes
+               |> List.map ~f:(fun a ->
+                 Explicit.Substitute.Type.subIndicesIntoArray indexSubMap a)
+             in
+             argTypes, retType, rest
+           | _ ->
+             raise
+               (Unreachable.Error
+                  (Printf.sprintf
+                     "Expected Index Application on app stack, got %s"
+                     (Sexp.to_string_hum (sexp_of_appStack appStack)))))
        in
-       let inlineIOFun = partialInline primitive.appStack funType in
-       scalarOp ~args:argCount inlineIOFun
+       let argTypes, retType, libTypeParams, appStack =
+         if List.is_empty typeParams
+         then argTypes, retType, libTypeParams, appStack
+         else (
+           match appStack with
+           | TypeApp types :: rest ->
+             let typeSubMap =
+               List.map2_exn types typeParams ~f:(fun type' param -> param.binding, type')
+               |> Map.of_alist_exn (module Identifier)
+             in
+             let retType =
+               Explicit.Substitute.Type.subTypesIntoArray typeSubMap retType
+             in
+             let argTypes =
+               List.map argTypes ~f:(fun a ->
+                 Explicit.Substitute.Type.subTypesIntoArray typeSubMap a)
+             in
+             let libTypeParams =
+               libTypeParams
+               |> List.map ~f:(fun a ->
+                 Explicit.Substitute.Type.subTypesIntoAtom typeSubMap a)
+             in
+             argTypes, retType, libTypeParams, rest
+           | _ ->
+             raise
+               (Unreachable.Error
+                  (Printf.sprintf
+                     "Expected Type Application on app stack, got %s"
+                     (Sexp.to_string_hum (sexp_of_appStack appStack)))))
+       in
+       let retType = inlineArrayTypeWithStack appStack retType in
+       let retType = Nucleus.Type.Array retType in
+       let argTypes =
+         argTypes
+         |> List.map ~f:(fun a -> inlineArrayTypeWithStack [] a)
+         |> List.map ~f:(fun a -> Nucleus.Type.Array a)
+       in
+       let libTypeParams =
+         libTypeParams
+         |> List.map ~f:(fun a -> inlineAtomTypeWithStack [] a)
+         |> List.map ~f:(function
+           | { element; shape = [] } -> element
+           | _ ->
+             raise
+               (Unreachable.Error
+                  "IO function should not have array as a library type param"))
+       in
+       let%map args, _ =
+         args
+         |> List.map ~f:(fun arg -> inlineArray indexEnv [] (Ref arg))
+         |> InlineState.all
+         |> InlineState.unzip
+       in
+       let args =
+         List.map args ~f:(fun arg ->
+           I.ArrayAsAtom { array = arg; type' = (I.arrayType arg).element })
+       in
+       (match retType with
+        | Atom atom ->
+          let iofun = I.ScalarIOFun { name; libName; libTypeParams; argTypes; retType } in
+          scalar (I.AtomicPrimitive { op = iofun; args; type' = atom }), FunctionSet.Empty
+        | Array arr ->
+          ( I.ArrayPrimitive
+              (IOFun
+                 { name; libName; libTypeParams; argTypes; retType; args; type' = arr })
+          , FunctionSet.Empty ))
      | IntToBool -> scalarOp ~args:1 IntToBool
      | BoolToInt -> scalarOp ~args:1 BoolToInt
      | IntToFloat -> scalarOp ~args:1 IntToFloat

@@ -1580,12 +1580,13 @@ let rec allocRequest
           let retType = canonicalizeType retType in
           let argTypes = List.map argTypes ~f:canonicalizeType in
           return @@ Acorn.Expr.LibFun { name; libName; argTypes; retType }
-        | IOFun { name; libName; argTypes; retType } ->
+        | IOFun { name; libName; libTypeParams; argTypes; retType } ->
           let retType = canonicalizeType retType in
           let argTypes = List.map argTypes ~f:canonicalizeType in
+          let libTypeParams = List.map libTypeParams ~f:canonicalizeType in
           let%map resultMem = malloc ~mallocLoc retType [%string "%{name}Result"] in
           let resultMem = Some resultMem in
-          Acorn.Expr.IOFun { name; libName; argTypes; retType; resultMem }
+          Acorn.Expr.IOFun { name; libName; libTypeParams; argTypes; retType; resultMem }
       in
       res
     in

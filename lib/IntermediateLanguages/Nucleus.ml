@@ -139,9 +139,10 @@ module Expr = struct
         ; argTypes : Type.t list
         ; retType : Type.t
         }
-    | IOFun of
+    | ScalarIOFun of
         { name : string
         ; libName : string
+        ; libTypeParams : Type.atom list
         ; argTypes : Type.t list
         ; retType : Type.t
         }
@@ -219,6 +220,15 @@ module Expr = struct
         ; cellShape : Index.shape
         ; type' : Type.array
         }
+    | IOFun of
+        { name : string
+        ; libName : string
+        ; libTypeParams : Type.atom list
+        ; argTypes : Type.t list
+        ; retType : Type.t
+        ; args : atom list
+        ; type' : Type.array
+        }
 
   and values =
     { elements : atom list
@@ -287,7 +297,8 @@ module Expr = struct
        | Fold fold -> fold.type'
        | Append append -> append.type'
        | ContiguousSubArray contiguousSubArray -> contiguousSubArray.type'
-       | Scatter scatter -> scatter.type')
+       | Scatter scatter -> scatter.type'
+       | IOFun iofun -> iofun.type')
   ;;
 end
 

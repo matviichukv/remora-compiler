@@ -333,6 +333,7 @@ module Expr = struct
     | IOFun of
         { name : string
         ; libName : string
+        ; libTypeParams : Type.t list
         ; argTypes : Type.t list
         ; retType : Type.t
         ; resultMem : Mem.t option
@@ -704,7 +705,14 @@ module Expr = struct
          | LtF -> "<."
          | LtEqF -> "<=."
          | LibFun { name; libName = _; argTypes = _; retType = _ } -> name
-         | IOFun { name; libName = _; argTypes = _; retType = _; resultMem = _ } -> name)
+         | IOFun
+             { name
+             ; libName = _
+             ; libTypeParams = _
+             ; argTypes = _
+             ; retType = _
+             ; resultMem = _
+             } -> name)
 
     and sexp_of_scalarPrimitive
       : type a c. (a -> Sexp.t) -> (c -> Sexp.t) -> (a, c) scalarPrimitive -> Sexp.t

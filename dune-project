@@ -1,4 +1,4 @@
-(lang dune 3.7)
+(lang dune 3.13)
 
 (name remora)
 
@@ -15,7 +15,7 @@
 
 (documentation https://url/to/documentation)
 
-(using menhir 2.1)
+(using menhir 3.0)
 
 (package
  (name remora)
