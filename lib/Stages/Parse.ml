@@ -113,3 +113,45 @@ module Stage (SB : Source.BuilderT) = struct
               Source.{ elem; source = Some source })))
   ;;
 end
+
+module StageIndex (SB : Source.BuilderT) = struct
+  module Parser = Make (SB)
+
+  type state = CompilerState.state
+  type input = string
+  type output = SB.source Ast.Index.t
+  type error = (SB.source option, string) Source.annotate
+
+  let name = "Parse Index"
+
+  let run input =
+    CompilerPipeline.S.returnF
+      (match Parser.parseIndex input with
+       | MOk _ as expr -> expr
+       | Errors errs ->
+         Errors
+           (NeList.map errs ~f:(fun (elem, source) ->
+              Source.{ elem; source = Some source })))
+  ;;
+end
+
+module StageType (SB : Source.BuilderT) = struct
+  module Parser = Make (SB)
+
+  type state = CompilerState.state
+  type input = string
+  type output = SB.source Ast.Type.t
+  type error = (SB.source option, string) Source.annotate
+
+  let name = "Parse Type"
+
+  let run input =
+    CompilerPipeline.S.returnF
+      (match Parser.parseType input with
+       | MOk _ as expr -> expr
+       | Errors errs ->
+         Errors
+           (NeList.map errs ~f:(fun (elem, source) ->
+              Source.{ elem; source = Some source })))
+  ;;
+end

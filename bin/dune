@@ -2,6 +2,6 @@
  (public_name remora)
  (name main)
  (modes byte exe)
- (libraries remora)
+ (libraries remora core_unix.command_unix)
  (preprocess
   (pps ppx_jane ppx_deriving.eq ppx_deriving.show ppx_deriving.ord)))

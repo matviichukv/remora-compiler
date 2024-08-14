@@ -7,6 +7,9 @@ module type S = sig
   val compiler : (CompilerState.state, string, string, error) CompilerPipeline.t
   val compileStringToString : string -> (string, error) MResult.t
   val showError : error -> string
+
+  (* Contents of a CMakeLists.txt file to compile the output *)
+  val cmakeFileContents : string -> string
 end
 
 module Make (SB : Source.BuilderT) = struct
@@ -31,7 +34,8 @@ module Make (SB : Source.BuilderT) = struct
       (* @> (module Show.Passthrough.Stage (Acorn.SansCaptures) (SB)) *)
       @> (module Capture.Stage (SB))
       (* @> (module Show.Passthrough.Stage (Acorn.WithCaptures) (SB)) *)
-      (* @> (module RemoveMemMove.Stage (SB)) *)
+      @> (module RemoveMemMove.Stage (SB))
+      (* @> (module Show.Passthrough.Stage (Acorn.WithCaptures) (SB)) *)
       @> (module Codegen.Stage (SB))
       @> (module PrintC.Stage (SB))
       @> empty)
@@ -40,6 +44,8 @@ module Make (SB : Source.BuilderT) = struct
   let compileStringToString input =
     CompilerPipeline.S.runA (CompilerPipeline.make compiler input) CompilerState.initial
   ;;
+
+  let cmakeFileContents mainFile = Codegen.cmakeContents mainFile
 
   let showError ({ elem = error; source } : error) =
     match Option.map source ~f:SB.show with

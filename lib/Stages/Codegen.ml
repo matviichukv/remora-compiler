@@ -9,6 +9,8 @@ let prelude =
 #include <iostream>
 #include <vector>
 #include <highfive/highfive.hpp>
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
 
 static void HandleError(cudaError_t err, const char *file, int line) {
   if (err != cudaSuccess) {
@@ -179,6 +181,15 @@ void readH5(std::string filename, std::string dataset_name, T* data, size_t size
   assert(datasetSize == size);
   dataset.read(data);
 }
+
+void read_image(std::string file, unsigned char* data, size_t size) {
+  int x, y, n;
+  unsigned char* data_stbi = stbi_load(file.c_str(), &x, &y, &n, 0);
+  std::cout << "Data from image: " << x << " " << y << " " << n << std::endl;
+  assert((size_t)(x * y * n) == size);
+  memcpy(data, data_stbi, size);
+  stbi_image_free(data_stbi);
+}
 |}
   |> String.strip
   |> String.split_lines
@@ -348,7 +359,16 @@ let genType ?(wrapInPtr = false) type' : (C.type', _) GenState.u =
       | Some cType -> return cType
       | None ->
         (match type' with
-         | Literal IntLiteral -> return C.Int64
+         | Literal (IntLiteral size) ->
+           (match size with
+            | Typed.Type.UInt8 -> return C.UInt8
+            | Typed.Type.Int8 -> return C.Int8
+            | Typed.Type.UInt16 -> return C.UInt16
+            | Typed.Type.Int16 -> return C.Int16
+            | Typed.Type.UInt32 -> return C.UInt32
+            | Typed.Type.Int32 -> return C.Int32
+            | Typed.Type.UInt64 -> return C.UInt64
+            | Typed.Type.Int64 -> return C.Int64)
          | Literal FloatLiteral -> return C.Float64
          | Literal CharacterLiteral -> return C.Char
          | Literal BooleanLiteral -> return C.Bool
@@ -718,7 +738,7 @@ let genCopyExprToMem =
            := expr %. boxValueFieldName)
     | Atom
         (Literal
-          (IntLiteral | FloatLiteral | BooleanLiteral | CharacterLiteral | StringLiteral))
+          (IntLiteral _ | FloatLiteral | BooleanLiteral | CharacterLiteral | StringLiteral))
       ->
       let mem = if memNeedsPtrDeref then C.PtrDeref mem else mem in
       GenState.write @@ Cx.(mem := expr)
@@ -1378,7 +1398,8 @@ and genExpr
              | Shape ->
                let size =
                  match Expr.type' v with
-                 | Array { element = Literal IntLiteral; shape = [ size ] } -> size
+                 | Array { element = Literal (IntLiteral Int32); shape = [ size ] } ->
+                   size
                  | _ -> raise @@ Unreachable.Error "expected 1d array of ints"
                in
                let dimCount = genShapeElementSize size in
@@ -3395,7 +3416,7 @@ and genExpr
     let%bind cIndexArg = genExpr ~hostOrDevice ~store:true indexArg in
     let indexArgLen =
       match Expr.type' indexArg with
-      | Array { element = Literal IntLiteral; shape = [ Add l ] } -> l
+      | Array { element = Literal (IntLiteral Int32); shape = [ Add l ] } -> l
       | _ -> raise @@ Unreachable.Error "expected a 1-d array of integers"
     in
     let%bind cIndexArgLen = GenState.createVarAuto "indexArgLen" @@ genDim indexArgLen in
@@ -3528,8 +3549,11 @@ and genExpr
       | Atom (Sigma _)
       | Atom
           (Literal
-            (IntLiteral | FloatLiteral | BooleanLiteral | CharacterLiteral | StringLiteral))
-        -> return @@ C.PtrDeref mem
+            ( IntLiteral _
+            | FloatLiteral
+            | BooleanLiteral
+            | CharacterLiteral
+            | StringLiteral )) -> return @@ C.PtrDeref mem
     in
     let%bind mem = genMem ~store:true addr in
     genGetmem mem type'
@@ -3679,10 +3703,13 @@ and genMapBodyOnDevice
 let genPrint type' value =
   let open GenState.Let_syntax in
   match type' with
-  | Type.Atom
-      (Literal
-        (IntLiteral | FloatLiteral | CharacterLiteral | BooleanLiteral | StringLiteral))
+  | Type.Atom (Literal (FloatLiteral | CharacterLiteral | BooleanLiteral | StringLiteral))
     -> GenState.write @@ C.Eval Cx.(refStr "std::cout" << value << charLit '\n')
+  | Type.Atom (Literal (IntLiteral _)) ->
+    (* Cast to int64 because speed doesn't matter here, and this allows to print *)
+    (* 8-bit ints because those are just aliased to chars and does not print well *)
+    let castValue = C.Cast { type' = Int64; value } in
+    GenState.write @@ C.Eval Cx.(refStr "std::cout" << castValue << charLit '\n')
   | Type.Atom (Sigma _) -> raise Unimplemented.default
   | Type.Array { element; shape } ->
     let%bind cElement = genType (Atom element) in
@@ -3758,11 +3785,6 @@ let genMainBlock (deviceInfo : DeviceInfo.t) (main : withCaptures) =
     @@ C.Eval (Cx.callBuiltin "cudaEventSynchronize" [ VarRef (StrName "stop") ])
   in
   let mainType = Expr.type' main in
-  mainType
-  |> [%sexp_of: Type.t]
-  |> Sexp.to_string_hum
-  |> Printf.sprintf "Type of main: %s"
-  |> Stdio.prerr_endline;
   let%bind () = genPrint mainType cVal in
   let%bind () =
     GenState.write
@@ -3794,6 +3816,27 @@ let codegen (deviceInfo : DeviceInfo.t) (prog : withCaptures)
     Some block
   in
   CBuilder.build ~prelude builder
+;;
+
+let cmakeContents (mainFile : string) : string =
+  [%string
+    {|
+cmake_minimum_required(VERSION 3.6 FATAL_ERROR)
+
+project(H5Test LANGUAGES CXX CUDA)
+
+set(HIGHFIVE_USE_BOOST Off)
+find_package(HDF5 REQUIRED)
+include(FetchContent)
+FetchContent_Declare(HighFive
+  GIT_REPOSITORY "https://github.com/BlueBrain/HighFive"
+  GIT_TAG "v2.9.0"
+)
+FetchContent_MakeAvailable(HighFive)
+
+add_executable(main %{mainFile} stb_image.h)
+target_link_libraries(main HighFive HDF5::HDF5)
+|}]
 ;;
 
 module Stage (SB : Source.BuilderT) = struct

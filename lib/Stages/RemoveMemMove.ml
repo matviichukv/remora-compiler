@@ -420,7 +420,7 @@ let removeMemMoves expr =
       (Sexp.to_string_hum (sexp_of_dfValue v)))
   |> String.concat
   |> Printf.sprintf "Information map: \n%s"
-  |> Stdio.print_endline;
+  |> Stdio.prerr_endline;
   return expr
 ;;
 

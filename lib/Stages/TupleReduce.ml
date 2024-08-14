@@ -1061,7 +1061,7 @@ let rec reduceTuplesInExpr (request : TupleRequest.t) expr =
           |> Option.map ~f:(fun cache ->
             createUnpackersFromCache cache [] ~insideWhole:false
             |> List.map ~f:(fun unpacker ->
-              unpacker (Ref { id = iota; type' = Literal IntLiteral }))))
+              unpacker (Ref { id = iota; type' = Literal (IntLiteral Int32) }))))
         |> List.filter_opt
         |> List.concat
       in

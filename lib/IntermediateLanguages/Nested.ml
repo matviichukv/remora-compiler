@@ -329,7 +329,7 @@ module Expr = struct
 
   let type' : t -> Type.t = function
     | Box box -> Sigma box.type'
-    | Literal (IntLiteral _) -> Literal IntLiteral
+    | Literal (IntLiteral _) -> Literal (IntLiteral Int32)
     | Literal (FloatLiteral _) -> Literal FloatLiteral
     | Literal (CharacterLiteral _) -> Literal CharacterLiteral
     | Literal (BooleanLiteral _) -> Literal BooleanLiteral
@@ -343,7 +343,7 @@ module Expr = struct
     | IndexLet indexLet -> indexLet.type'
     | Let let' -> let'.type'
     | ReifyIndex reifyIndex -> reifyIndex.type'
-    | ShapeProd _ -> Literal IntLiteral
+    | ShapeProd _ -> Literal (IntLiteral Int32)
     | LoopBlock loopBlock -> Tuple loopBlock.type'
     | ContiguousSubArray contiguousSubArray -> contiguousSubArray.type'
     | Append append -> append.type'
@@ -366,11 +366,11 @@ module Expr = struct
   let let' ~args ~body = Let { args; body; type' = type' body }
 
   let ( + ) a b =
-    ScalarPrimitive { op = Add; args = [ a; b ]; type' = Literal IntLiteral }
+    ScalarPrimitive { op = Add; args = [ a; b ]; type' = Literal (IntLiteral Int32) }
   ;;
 
   let ( * ) a b =
-    ScalarPrimitive { op = Mul; args = [ a; b ]; type' = Literal IntLiteral }
+    ScalarPrimitive { op = Mul; args = [ a; b ]; type' = Literal (IntLiteral Int32) }
   ;;
 
   let tupleDeref ~tuple ~index =
@@ -662,7 +662,7 @@ module Substitute = struct
       let open Type in
       function
       | Sigma sigma -> Sigma (subIndicesIntoSigma indices sigma)
-      | Literal IntLiteral -> Literal IntLiteral
+      | Literal (IntLiteral size) -> Literal (IntLiteral size)
       | Literal FloatLiteral -> Literal FloatLiteral
       | Literal CharacterLiteral -> Literal CharacterLiteral
       | Literal BooleanLiteral -> Literal BooleanLiteral
@@ -681,7 +681,7 @@ module Substitute = struct
       let open Type in
       function
       | Sigma sigma -> Sigma (subTypesIntoSigma types sigma)
-      | Literal IntLiteral -> Literal IntLiteral
+      | Literal (IntLiteral size) -> Literal (IntLiteral size)
       | Literal FloatLiteral -> Literal FloatLiteral
       | Literal CharacterLiteral -> Literal CharacterLiteral
       | Literal BooleanLiteral -> Literal BooleanLiteral

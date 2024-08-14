@@ -292,7 +292,7 @@ module Expr = struct
 
   let type' : type l. l t -> Type.t = function
     | Box box -> Sigma box.type'
-    | Literal (IntLiteral _) -> Literal IntLiteral
+    | Literal (IntLiteral _) -> Literal (IntLiteral Int32)
     | Literal (FloatLiteral _) -> Literal FloatLiteral
     | Literal (CharacterLiteral _) -> Literal CharacterLiteral
     | Literal (BooleanLiteral _) -> Literal BooleanLiteral
@@ -306,7 +306,7 @@ module Expr = struct
     | IndexLet indexLet -> indexLet.type'
     | Let let' -> let'.type'
     | ReifyIndex reifyIndex -> reifyIndex.type'
-    | ShapeProd _ -> Literal IntLiteral
+    | ShapeProd _ -> Literal (IntLiteral Int32)
     | LoopBlock loopBlock -> Tuple loopBlock.type'
     | LoopKernel loopKernel -> Tuple loopKernel.kernel.type'
     | MapKernel mapKernel -> mapKernel.kernel.type'

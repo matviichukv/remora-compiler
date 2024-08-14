@@ -144,7 +144,16 @@ end = struct
     | Tuple elements ->
       let elementsString = elements |> showList showAtom in
       [%string "(Values %{elementsString})"]
-    | Literal IntLiteral -> "int"
+    | Literal (IntLiteral size) ->
+      (match size with
+       | UInt8 -> "uint8"
+       | Int8 -> "int8"
+       | UInt16 -> "uint16"
+       | Int16 -> "int16"
+       | UInt32 -> "uint32"
+       | Int32 -> "int32"
+       | UInt64 -> "uint64"
+       | Int64 -> "int64")
     | Literal FloatLiteral -> "float"
     | Literal CharacterLiteral -> "char"
     | Literal BooleanLiteral -> "bool"
@@ -729,7 +738,7 @@ module TypeCheck = struct
         findInType extendedEnv (Array body)
       | Atom (Tuple elements) ->
         List.bind ~f:(fun elt -> findInType env (Atom elt)) elements
-      | Atom (Literal IntLiteral) -> []
+      | Atom (Literal (IntLiteral _)) -> []
       | Atom (Literal FloatLiteral) -> []
       | Atom (Literal CharacterLiteral) -> []
       | Atom (Literal BooleanLiteral) -> []
@@ -1197,7 +1206,7 @@ module TypeCheck = struct
       in
       let%bind () =
         match indexValueType.element with
-        | Literal IntLiteral -> return ()
+        | Literal (IntLiteral _) -> return ()
         | t ->
           CheckerState.err
             { elem = LiftIndexValueNotInteger t; source = indexValueSource }
@@ -1433,7 +1442,7 @@ module TypeCheck = struct
                     { elements = []
                     ; dimensions = [ 0 ]
                     ; type' =
-                        { element = Literal IntLiteral
+                        { element = Literal (IntLiteral Int32)
                         ; shape = [ Add (Typed.Index.dimensionConstant 0) ]
                         }
                     }
@@ -1448,7 +1457,7 @@ module TypeCheck = struct
       T.Array
         (ReifyIndex
            { index = Dimension dimension
-           ; type' = { element = Literal IntLiteral; shape = [] }
+           ; type' = { element = Literal (IntLiteral Int32); shape = [] }
            })
     | U.ReifyShape shape ->
       let%bind shape = SortChecker.checkAndExpectShape env shape in
@@ -1461,7 +1470,7 @@ module TypeCheck = struct
         then
           ok
             Typed.Type.
-              { element = Literal IntLiteral
+              { element = Literal (IntLiteral Int32)
               ; shape = [ Add (Typed.Index.dimensionConstant (List.length shape)) ]
               }
         else (
@@ -1473,7 +1482,7 @@ module TypeCheck = struct
                   { parameters = [ { binding = len; bound = Dim } ]
                   ; body =
                       Arr
-                        { element = Literal IntLiteral
+                        { element = Literal (IntLiteral Int32)
                         ; shape = [ Add (Typed.Index.dimensionRef len) ]
                         }
                   }

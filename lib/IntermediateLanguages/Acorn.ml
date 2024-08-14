@@ -607,7 +607,7 @@ module Expr = struct
 
   let rec type' : type l c. (l, c) t -> Type.t = function
     | Box box -> Atom (Sigma box.type')
-    | Literal (IntLiteral _) -> Atom (Literal IntLiteral)
+    | Literal (IntLiteral _) -> Atom (Literal (IntLiteral Int32))
     | Literal (FloatLiteral _) -> Atom (Literal FloatLiteral)
     | Literal (CharacterLiteral _) -> Atom (Literal CharacterLiteral)
     | Literal (BooleanLiteral _) -> Atom (Literal BooleanLiteral)
@@ -620,8 +620,8 @@ module Expr = struct
     | IndexLet indexLet -> indexLet.type'
     | Let let' -> type' let'.body
     | MallocLet mallocLet -> type' mallocLet.body
-    | ReifyDimensionIndex _ -> Atom (Literal IntLiteral)
-    | ShapeProd _ -> Atom (Literal IntLiteral)
+    | ReifyDimensionIndex _ -> Atom (Literal (IntLiteral Int32))
+    | ShapeProd _ -> Atom (Literal (IntLiteral Int32))
     | LoopBlock loopBlock -> Tuple loopBlock.type'
     | LoopKernel loopKernel -> Tuple loopKernel.kernel.loopBlock.type'
     | ContiguousSubArray contiguousSubArray -> contiguousSubArray.type'

@@ -21,7 +21,9 @@ module Base : S = struct
     let%bind sorts = makeSubEnv [] in
     let%bind kinds =
       makeSubEnv
-        [ "int", return (Type.Atom (Literal IntLiteral))
+        [ "int", return (Type.Atom (Literal (IntLiteral Int32)))
+        ; "int32", return (Type.Atom (Literal (IntLiteral Int32)))
+        ; "uint8", return (Type.Atom (Literal (IntLiteral UInt8)))
         ; "float", return (Type.Atom (Literal FloatLiteral))
         ; "char", return (Type.Atom (Literal CharacterLiteral))
         ; "bool", return (Type.Atom (Literal BooleanLiteral))
@@ -251,6 +253,14 @@ module Stdlib : S = struct
           Intrinsic
             { makeValue = (fun type' -> Expr.Primitive { name = Func Not; type' })
             ; type' = "(-> (bool) bool)"
+            }
+      }
+    ; { name = "uint8->float"
+      ; userVisible = true
+      ; value =
+          Intrinsic
+            { makeValue = (fun type' -> Expr.Primitive { name = Func IntToFloat; type' })
+            ; type' = "(-> (uint8) float)"
             }
       }
     ; { name = "int->float"
@@ -798,6 +808,18 @@ module Stdlib : S = struct
             ; indexParams = [ "@out-size" ]
             ; argTypes = [ "constant-string"; "constant-string" ]
             ; retType = "[t @out-size]"
+            }
+      }
+    ; { name = "read-image"
+      ; userVisible = true
+      ; value =
+          IOFunction
+            { libName = "read_image"
+            ; typeParams = []
+            ; libTypeParams = []
+            ; indexParams = [ "@out-size" ]
+            ; argTypes = [ "constant-string" ]
+            ; retType = "[uint8 @out-size]"
             }
       }
     ]

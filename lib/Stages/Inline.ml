@@ -133,7 +133,7 @@ let rec inlineAtomTypeWithStack appStack : Typed.Type.atom -> Nucleus.Type.array
   | Sigma sigma ->
     { element = Sigma (inlineSigmaTypeWithStack appStack sigma); shape = [] }
   | Literal CharacterLiteral -> { element = Literal CharacterLiteral; shape = [] }
-  | Literal IntLiteral -> { element = Literal IntLiteral; shape = [] }
+  | Literal (IntLiteral size) -> { element = Literal (IntLiteral size); shape = [] }
   | Literal FloatLiteral -> { element = Literal FloatLiteral; shape = [] }
   | Literal BooleanLiteral -> { element = Literal BooleanLiteral; shape = [] }
   | Literal StringLiteral -> { element = Literal StringLiteral; shape = [] }
@@ -220,7 +220,7 @@ let assertValueRestriction value =
       | Pi _ -> true
       | Sigma sigma -> isPolymorphicArray sigma.body
       | Tuple elements -> List.for_all ~f:isPolymorphicAtom elements
-      | Literal IntLiteral -> false
+      | Literal (IntLiteral _) -> false
       | Literal FloatLiteral -> false
       | Literal CharacterLiteral -> false
       | Literal BooleanLiteral -> false
@@ -497,7 +497,9 @@ let rec inlineArray indexEnv (appStack : appStack) (array : Explicit.Expr.array)
                  ; iotaVar = Some iota
                  ; body =
                      Ref
-                       { id = iota; type' = { element = Literal IntLiteral; shape = [] } }
+                       { id = iota
+                       ; type' = { element = Literal (IntLiteral Int32); shape = [] }
+                       }
                  ; type' = inlineArrayTypeWithStack appStack type'
                  })
           , FunctionSet.Empty )

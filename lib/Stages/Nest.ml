@@ -105,7 +105,8 @@ let rec nestArray : Nucleus.Expr.array -> (Nested.t, _) NestState.u =
             ; value =
                 (match parentIota with
                  | None -> Literal (IntLiteral 0)
-                 | Some parentIota -> Ref { id = parentIota; type' = Literal IntLiteral })
+                 | Some parentIota ->
+                   Ref { id = parentIota; type' = Literal (IntLiteral Int32) })
             })
         in
         let letArgs =
@@ -144,7 +145,7 @@ let rec nestArray : Nucleus.Expr.array -> (Nested.t, _) NestState.u =
                        ~args:
                          [ { binding = parentChunkedIota
                            ; value =
-                               Ref { id = parentIota; type' = Literal IntLiteral }
+                               Ref { id = parentIota; type' = Literal (IntLiteral Int32) }
                                * ShapeProd [ shapeElement ]
                            }
                          ]
@@ -156,8 +157,11 @@ let rec nestArray : Nucleus.Expr.array -> (Nested.t, _) NestState.u =
                            [ { binding = newIotaChild
                              ; value =
                                  Ref
-                                   { id = parentChunkedIota; type' = Literal IntLiteral }
-                                 + Ref { id = newIota; type' = Literal IntLiteral }
+                                   { id = parentChunkedIota
+                                   ; type' = Literal (IntLiteral Int32)
+                                   }
+                                 + Ref
+                                     { id = newIota; type' = Literal (IntLiteral Int32) }
                              }
                            ]
                          ~body) ))

@@ -72,8 +72,18 @@ module Type = struct
   and pi = Sort.t abstraction
   and sigma = Sort.t abstraction
 
+  and intVariant =
+    | UInt8
+    | Int8
+    | UInt16
+    | Int16
+    | UInt32
+    | Int32
+    | UInt64
+    | Int64
+
   and literal =
-    | IntLiteral
+    | IntLiteral of intVariant
     | FloatLiteral
     | CharacterLiteral
     | BooleanLiteral
@@ -333,7 +343,8 @@ module Expr = struct
     | IndexLambda indexLambda -> Pi indexLambda.type'
     | Box box -> Sigma box.type'
     | TupleExpr tuple -> Tuple tuple.type'
-    | Literal (IntLiteral _) -> Literal IntLiteral
+    (* NOTE: we choose int32 to be default for literals *)
+    | Literal (IntLiteral _) -> Literal (IntLiteral Int32)
     | Literal (FloatLiteral _) -> Literal FloatLiteral
     | Literal (CharacterLiteral _) -> Literal CharacterLiteral
     | Literal (BooleanLiteral _) -> Literal BooleanLiteral
@@ -541,7 +552,7 @@ end = struct
                arrayFrom env depth body)
           }
       | Type.Tuple tupleElements -> Tuple (List.map ~f:(atomFrom env depth) tupleElements)
-      | Type.Literal IntLiteral -> Literal IntLiteral
+      | Type.Literal (IntLiteral _) -> Literal IntLiteral
       | Type.Literal FloatLiteral -> Literal FloatLiteral
       | Type.Literal CharacterLiteral -> Literal CharacterLiteral
       | Type.Literal BooleanLiteral -> Literal BooleanLiteral
@@ -631,7 +642,7 @@ module Substitute = struct
       | Sigma sigma -> Sigma (subIndicesIntoSigma indices sigma)
       | Tuple tupleElements ->
         Tuple (List.map ~f:(subIndicesIntoAtom indices) tupleElements)
-      | Literal IntLiteral -> Literal IntLiteral
+      | Literal (IntLiteral size) -> Literal (IntLiteral size)
       | Literal FloatLiteral -> Literal FloatLiteral
       | Literal CharacterLiteral -> Literal CharacterLiteral
       | Literal BooleanLiteral -> Literal BooleanLiteral
@@ -689,7 +700,7 @@ module Substitute = struct
       | Pi pi -> Pi (subTypesIntoPi types pi)
       | Sigma sigma -> Sigma (subTypesIntoSigma types sigma)
       | Tuple tupleElements -> Tuple (List.map ~f:(subTypesIntoAtom types) tupleElements)
-      | Literal IntLiteral -> Literal IntLiteral
+      | Literal (IntLiteral size) -> Literal (IntLiteral size)
       | Literal FloatLiteral -> Literal FloatLiteral
       | Literal CharacterLiteral -> Literal CharacterLiteral
       | Literal BooleanLiteral -> Literal BooleanLiteral

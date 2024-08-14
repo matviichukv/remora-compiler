@@ -1198,7 +1198,7 @@ let rec allocRequest
        let%bind mem =
          malloc
            ~mallocLoc
-           (Array { element = Literal IntLiteral; shape = [ Add shapeLen ] })
+           (Array { element = Literal (IntLiteral Int32); shape = [ Add shapeLen ] })
            "reify-index-array"
        in
        unwrittenExprToAllocResult
@@ -1495,7 +1495,9 @@ let rec allocRequest
           let shape = convertShape shape in
           let reifiedShapeType =
             Type.Array
-              { element = Literal IntLiteral; shape = [ Add (getShapeLen shape) ] }
+              { element = Literal (IntLiteral Int32)
+              ; shape = [ Add (getShapeLen shape) ]
+              }
           in
           let%map mem = malloc ~mallocLoc reifiedShapeType "reify-index-array" in
           Expr.

@@ -3,7 +3,7 @@ open Remora
 
 let%expect_test "parse index" =
   let parseAndPrint str =
-    match Parse.Unit.IndexParser.parseString str with
+    match Parse.Unit.parseIndex str with
     | MOk result ->
       [%sexp_of: unit Ast.Index.t] result |> Sexp.to_string_hum |> Stdio.print_endline
     | Errors errs ->
@@ -42,7 +42,7 @@ let%expect_test "parse index" =
 
 let%expect_test "parse type" =
   let parseAndPrint str =
-    match Parse.Unit.TypeParser.parseString str with
+    match Parse.Unit.parseType str with
     | MOk result ->
       [%sexp_of: unit Ast.Type.t] result |> Sexp.to_string_hum |> Stdio.print_endline
     | Errors errs ->
@@ -146,7 +146,7 @@ let%expect_test "parse type" =
 
 let%expect_test "parse expression" =
   let parseAndPrint str =
-    match Parse.Unit.ExprParser.parseString str with
+    match Parse.Unit.parseString str with
     | MOk result ->
       [%sexp_of: unit Ast.Expr.t] result |> Sexp.to_string_hum |> Stdio.print_endline
     | Errors errs ->

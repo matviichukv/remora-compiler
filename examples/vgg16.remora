@@ -83,6 +83,7 @@
   (let [windows (subarray/2{float | (+ 1 n-1 pad pad) (+ 1 n-1 pad pad) (+ 1 k-1) (+ 1 k-1)}
                            padded-data (* (reify-dimension stride) (indices-of/2{| o o})))]
     (let [repl-weights (replicate{float | [o o] [(+ k-1 1) (+ k-1 1)]} weights)]
+    ;; TODO: reshape is wrong, we need multiply that we cannot replace with add
       (+. bias (reduce{float | (+ k-1 k-1 k-1 1 1) [] []} +. (reshape [o o (+ k-1 k-1 k-1 1 1 1)] (*. windows repl-weights))))))))
 
 ;; we need convolution 3d for channels in 2d image

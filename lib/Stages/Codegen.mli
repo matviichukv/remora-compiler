@@ -1,6 +1,7 @@
 open! Base
 
 val codegen : DeviceInfo.t -> Acorn.withCaptures -> (CompilerState.state, C.t, _) State.t
+val cmakeContents : string -> string
 
 module Stage (SB : Source.BuilderT) :
   CompilerPipeline.Stage

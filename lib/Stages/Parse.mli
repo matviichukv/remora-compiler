@@ -62,3 +62,17 @@ module Stage (SB : Source.BuilderT) :
     with type input = string
     with type output = SB.source Ast.t
     with type error = (SB.source option, string) Source.annotate
+
+module StageIndex (SB : Source.BuilderT) :
+  CompilerPipeline.Stage
+    with type state = CompilerState.state
+    with type input = string
+    with type output = SB.source Ast.Index.t
+    with type error = (SB.source option, string) Source.annotate
+
+module StageType (SB : Source.BuilderT) :
+  CompilerPipeline.Stage
+    with type state = CompilerState.state
+    with type input = string
+    with type output = SB.source Ast.Type.t
+    with type error = (SB.source option, string) Source.annotate

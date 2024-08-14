@@ -4,8 +4,7 @@ open Remora
 let%expect_test "check sort" =
   let pipeline =
     CompilerPipeline.(
-      let module Parse = Parse.Make (Source.UnitBuilder) in
-      (module Parse.IndexParser.Stage)
+      (module Parse.StageIndex (Source.UnitBuilder))
       @> (module TypeCheckStage.Sort (Source.UnitBuilder))
       @> (module Show.Stage (Typed.Index) (Source.UnitBuilder))
       @> empty)
@@ -48,8 +47,7 @@ let%expect_test "check sort" =
 let%expect_test "check kind" =
   let pipeline =
     CompilerPipeline.(
-      let module Parse = Parse.Make (Source.UnitBuilder) in
-      (module Parse.TypeParser.Stage)
+      (module Parse.StageType (Source.UnitBuilder))
       @> (module TypeCheckStage.Kind (Source.UnitBuilder))
       @> (module Show.Stage (Typed.Type) (Source.UnitBuilder))
       @> empty)
@@ -180,8 +178,7 @@ let%expect_test "check kind" =
 let%expect_test "check type" =
   let pipeline =
     CompilerPipeline.(
-      let module Parse = Parse.Make (Source.UnitBuilder) in
-      (module Parse.Stage)
+      (module Parse.Stage (Source.UnitBuilder))
       @> (module TypeCheckStage.Type (Source.UnitBuilder))
       @> (module Show.CustomStage
                    (struct

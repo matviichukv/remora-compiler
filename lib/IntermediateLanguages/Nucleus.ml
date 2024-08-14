@@ -22,9 +22,10 @@ module Type = struct
     }
 
   and tuple = atom list
+  and intVariant = Typed.Type.intVariant
 
   and literal =
-    | IntLiteral
+    | IntLiteral of intVariant
     | FloatLiteral
     | CharacterLiteral
     | BooleanLiteral
@@ -272,7 +273,7 @@ module Expr = struct
 
   let atomType : atom -> Type.atom = function
     | Box box -> Sigma box.type'
-    | Literal (IntLiteral _) -> Literal IntLiteral
+    | Literal (IntLiteral _) -> Literal (IntLiteral Int32)
     | Literal (FloatLiteral _) -> Literal FloatLiteral
     | Literal (CharacterLiteral _) -> Literal CharacterLiteral
     | Literal (BooleanLiteral _) -> Literal BooleanLiteral
