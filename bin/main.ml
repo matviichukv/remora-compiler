@@ -39,23 +39,24 @@ let writeCompiledProgramToDirectory dir program =
   let%bind () =
     if not exists
     then (
-      Stdlib.Sys.mkdir dir 0o644;
+      Stdlib.Sys.mkdir dir 0o744;
       Ok ())
     else if not (Stdlib.Sys.is_directory dir)
     then Error (Error.of_string "Tried to write a directory to a file")
     else Ok () (* directory exists *)
   in
+  let flags = [ Open_creat; Open_trunc; Open_text; Open_wronly ] in
   let mainFileName = "main.cu" in
   let mainFile = Stdlib.Filename.concat dir mainFileName in
   let%bind () =
-    Stdlib.Out_channel.with_open_gen [] 0o644 mainFile (fun file ->
+    Stdlib.Out_channel.with_open_gen flags 0o644 mainFile (fun file ->
       Stdlib.Out_channel.output_string file program;
       Stdlib.Out_channel.flush file;
       Ok ())
   in
   let cmakeFile = Stdlib.Filename.concat dir "CMakeLists.txt" in
   let%bind () =
-    Stdlib.Out_channel.with_open_gen [] 0o644 cmakeFile (fun file ->
+    Stdlib.Out_channel.with_open_gen flags 0o644 cmakeFile (fun file ->
       Stdlib.Out_channel.output_string
         file
         (Compiler.Default.cmakeFileContents mainFileName);
@@ -69,8 +70,9 @@ let dependencies = "HighFive (for H5 file IO), stb_image (for reading images)"
 
 let command =
   Command.basic_or_error
-    ~summary:""
-    ~readme:(fun _ -> "")
+    ~summary:"Compile a Remora program into a C++ CUDA program (.cu extension)"
+    ~readme:(fun () ->
+      [%string "Resulting programs needs to be linked to dependencies: %{dependencies}. "])
     (let open Command.Param in
      let open Command.Let_syntax in
      let outputFile =

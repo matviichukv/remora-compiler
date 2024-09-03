@@ -399,6 +399,7 @@ module Expr = struct
 
   module Sexp_of = struct
     let sexp_of_ref ref = Sexp.Atom (Identifier.show ref.id)
+    (* Sexp.List [ Sexp.Atom (Identifier.show ref.id); Type.sexp_of_t ref.type' ] *)
 
     let rec sexp_of_frame { dimension = _; elements; type' = _ } =
       Sexp.List (Sexp.Atom "frame" :: List.map elements ~f:sexp_of_t)
@@ -459,8 +460,11 @@ module Expr = struct
     and sexp_of_tupleDeref { tuple; index; type' = _ } =
       Sexp.List [ Sexp.Atom [%string "#%{index#Int}"]; sexp_of_t tuple ]
 
-    and sexp_of_values ({ elements; type' = _ } : values) =
-      Sexp.List (Sexp.Atom "values" :: List.map elements ~f:sexp_of_t)
+    and sexp_of_values ({ elements; type' } : values) =
+      Sexp.List
+        (Sexp.Atom "values"
+         :: List.sexp_of_t Type.sexp_of_t type'
+         :: List.map elements ~f:sexp_of_t)
 
     and sexp_of_boxValue { box; type' = _ } =
       Sexp.List [ Sexp.Atom "unbox"; sexp_of_t box ]
@@ -481,11 +485,19 @@ module Expr = struct
         ]
 
     and sexp_of_letArg { binding; value } =
-      Sexp.List [ Sexp.Atom (Identifier.show binding); sexp_of_t value ]
-
-    and sexp_of_let { args; body; type' = _ } =
       Sexp.List
-        [ Sexp.Atom "let"; Sexp.List (List.map args ~f:sexp_of_letArg); sexp_of_t body ]
+        [ Sexp.Atom (Identifier.show binding)
+        ; Type.sexp_of_t (type' value)
+        ; sexp_of_t value
+        ]
+
+    and sexp_of_let { args; body; type' } =
+      Sexp.List
+        [ Sexp.Atom "let"
+        ; Sexp.List (List.map args ~f:sexp_of_letArg)
+        ; Type.sexp_of_t type'
+        ; sexp_of_t body
+        ]
 
     and sexp_of_reifyIndex { index; type' = _ } =
       Sexp.List [ Sexp.Atom "reify-index"; Index.sexp_of_t index ]
@@ -605,11 +617,12 @@ module Expr = struct
     and sexp_of_append ({ args; type' = _ } : append) =
       Sexp.List (Sexp.Atom "++" :: List.map args ~f:sexp_of_t)
 
-    and sexp_of_zip ({ zipArg; nestCount; type' = _ } : zip) =
+    and sexp_of_zip ({ zipArg; nestCount; type' } : zip) =
       Sexp.List
         [ Sexp.Atom [%string "zip"]
         ; Sexp.List [ Sexp.Atom "nests"; Sexp.Atom (Int.to_string nestCount) ]
         ; sexp_of_t zipArg
+        ; Type.sexp_of_t type'
         ]
 
     and sexp_of_unzip ({ unzipArg; type' = _ } : unzip) =

@@ -5,8 +5,8 @@
   (let [d1-val (reify-dimension d2)]
     ((fn ([id [int]]) [(/ id d1-val) (% id d1-val)]) iota{| [d1 d2]})))
 
-(define (foo {t @t2 t3} {d1 d2 @s}
-             ([arr [t d1 @s]] [bar [@t2 d1 d2]] -> [t3 d2 @s])) ...)
+;; (define (foo {t @t2 t3} {d1 d2 @s}
+;;              ([arr [t d1 @s]] [bar [@t2 d1 d2]] -> [t3 d2 @s])) ...)
 
 (define (indices-of/4{| d1 d2 d3 d4}): [int d1 d2 d3 d4 4]
   (let [d1-val (reify-dimension d1)]
@@ -84,7 +84,8 @@
                            padded-data (* (reify-dimension stride) (indices-of/2{| o o})))]
     (let [repl-weights (replicate{float | [o o] [(+ k-1 1) (+ k-1 1)]} weights)]
     ;; TODO: reshape is wrong, we need multiply that we cannot replace with add
-      (+. bias (reduce{float | (+ k-1 k-1 k-1 1 1) [] []} +. (reshape [o o (+ k-1 k-1 k-1 1 1 1)] (*. windows repl-weights))))))))
+    (+. bias (reduce{float | k-1 [] []} +. (reduce{float | k-1 [] []} +. (*. windows repl-weights))))))))
+      ;; (+. bias (reduce{float | (+ k-1 k-1 k-1 1 1) [] []} +. (reshape [o o (+ k-1 k-1 k-1 1 1 1)] (*. windows repl-weights))))))))
 
 ;; we need convolution 3d for channels in 2d image
 (define (conv-2d-channel{| n-1 k-1 c-1 o stride pad}

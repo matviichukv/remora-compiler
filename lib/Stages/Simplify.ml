@@ -1142,12 +1142,15 @@ let simplify expr =
     (*      "Dec Hoisted :\n%s" *)
     (*      (Sexp.to_string_hum (Expr.sexp_of_t decHoisted))); *)
     (* Perform standard optimizations *)
-    (* let optimized2 = optimize decHoisted in *)
+    let optimized2 = optimize decHoisted in
     (* Re-hoist and re-optimize if anything changed *)
     let hasChanged =
-      (not (Expr.equal decHoisted optimized1)) || not (Expr.equal expr optimized1)
+      ((not (Expr.equal decHoisted optimized1))
+       || (not (Expr.equal optimized1 expr))
+       || not (Expr.equal optimized2 optimized1))
+      && not (Expr.equal optimized2 expr)
     in
-    if hasChanged
+    if not hasChanged
     then (
       (* Hoist expressions that can be hoisted *)
       let%bind exprHoistedWithoutDecs, hoistings =
@@ -1161,7 +1164,7 @@ let simplify expr =
             ~args:(List.map hoistings ~f:(fun h -> h.variableDeclaration))
             ~body:exprHoistedWithoutDecs
       in
-      (* Stdio.print_endline *)
+      (* Stdio.prerr_endline *)
       (*   (Printf.sprintf *)
       (*      "Before tuple elimination:\n%s" *)
       (*      (Sexp.to_string_hum (Expr.sexp_of_t exprHoisted))); *)
@@ -1175,7 +1178,7 @@ let simplify expr =
       (* If reducing tuples did anything, loop. Otherwise, return *)
       (* return exprHoisted *)
       if droppedAny then loop reduced else return exprHoisted)
-    else loop optimized1
+    else loop optimized2
   in
   loop expr
 ;;

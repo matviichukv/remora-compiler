@@ -3431,6 +3431,21 @@ and genExpr
         (* indexIndex is the index in indexArg that we are currently on *)
         let%bind indexIndex = GenState.createVarAuto "indexIndex" @@ Cx.intLit 0 in
         (* TODO: this can easily be written without the weird for loop *)
+        (* let%bind stride = GenState.createVarAuto "stride" @@ Cx.intLit 1 in *)
+        (* let shapeElementToC _ = Cx.intLit 1 in *)
+        (* let indexMultipliers = *)
+        (*   shape *)
+        (*   |> List.tl *)
+        (*   |> Option.map ~f:(fun tail -> *)
+        (*     tail *)
+        (*   |> List.rev *)
+        (* |> List.cons (Cx.intLit 1) *)
+        (*     |> List.foo *)
+        (*          ~init:(return ()) *)
+        (*          ~f:(fun shapeElement acc -> *)
+        (*              )) *)
+        (*   |> Option.value ~default:[ Cx.intLit 1 ] *)
+        (* in *)
         let%bind () =
           GenState.writeForLoop
             ~loopVar:"elementIndex"

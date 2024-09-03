@@ -32,9 +32,10 @@ module TupleRequest = struct
     | _ -> false
   ;;
 
-  let unexpected ~actual ~expected =
+  let unexpected ~actual ~expected ~at =
     let actualStr = actual |> sexp_of_t |> Sexp.to_string_hum in
-    Unreachable.Error [%string "Expected %{expected} request type, \ngot %{actualStr}"]
+    Unreachable.Error
+      [%string "Expected %{expected} request type, \ngot %{actualStr} at %{at}"]
   ;;
 
   let rec subIndices subs = function
@@ -125,9 +126,15 @@ module ReduceTupleState = struct
   ;;
 end
 
-let rec reduceTuplesType (request : TupleRequest.t) : Type.t -> Type.t = function
-  | Array array -> Array (reduceTuplesArrayType request array)
+let rec reduceTuplesType (request : TupleRequest.t) : Type.t -> Type.t
+  =
+  (* request |> [%sexp_of: TupleRequest.t] |> Sexp.to_string_hum |> Stdio.prerr_endline; *)
+  function
+  | Array array ->
+    (* Array array |> [%sexp_of: Nested.Type.t] |> Sexp.to_string_hum |> Stdio.prerr_endline; *)
+    Array (reduceTuplesArrayType request array)
   | Tuple elements as t ->
+    (* t |> [%sexp_of: Nested.Type.t] |> Sexp.to_string_hum |> Stdio.prerr_endline; *)
     (match request with
      | Whole -> t
      | Element { i; rest } ->
@@ -138,7 +145,8 @@ let rec reduceTuplesType (request : TupleRequest.t) : Type.t -> Type.t = functio
          (List.map elementRequests ~f:(fun { i; rest } ->
             let element = List.nth_exn elements i in
             reduceTuplesType rest element))
-     | Collection _ -> raise (TupleRequest.unexpected ~actual:request ~expected:"tuple"))
+     | Collection _ ->
+       raise (TupleRequest.unexpected ~actual:request ~expected:"tuple" ~at:"1"))
   | Literal _ as lit ->
     assert (TupleRequest.isWhole request);
     lit
@@ -154,7 +162,7 @@ and reduceTuplesArrayType (request : TupleRequest.t) ({ element; size } as t : T
     { element = reduceTuplesType subRequest element; size }
   | Whole -> t
   | Element _ | Elements _ | Collection { subRequest = _; collectionType = Sigma _ } ->
-    raise (TupleRequest.unexpected ~actual:request ~expected:"array")
+    raise (TupleRequest.unexpected ~actual:request ~expected:"array" ~at:"2")
 
 and reduceTuplesSigmaType (request : TupleRequest.t) ({ parameters; body } : Type.sigma)
   : Type.sigma
@@ -166,7 +174,7 @@ and reduceTuplesSigmaType (request : TupleRequest.t) ({ parameters; body } : Typ
     { parameters; body }
   | Whole -> { parameters; body }
   | Element _ | Elements _ | Collection { subRequest = _; collectionType = Array _ } ->
-    raise (TupleRequest.unexpected ~actual:request ~expected:"sigma")
+    raise (TupleRequest.unexpected ~actual:request ~expected:"sigma" ~at:"3")
 ;;
 
 let rec createUnpackersFromCache
@@ -309,11 +317,10 @@ let rec reduceTuplesInExpr (request : TupleRequest.t) expr =
                    nextElementArray :: currElementArrays, nextCache)
              in
              let elements = List.rev elementsRev in
-             let tupleType =
-               match elementType with
-               | Tuple tuple -> tuple
-               | _ -> raise (Unreachable.Error "Expected tuple type")
-             in
+             (* raise error if it's not a tuple *)
+             (match elementType with
+              | Tuple _ -> ()
+              | _ -> raise (Unreachable.Error "Expected tuple type"));
              let stripCollections n type' =
                if n = 0
                then type'
@@ -323,20 +330,22 @@ let rec reduceTuplesInExpr (request : TupleRequest.t) expr =
                  | Type.Sigma { parameters = _; body } -> body
                  | _ -> raise @@ Unimplemented.Error "Expected collection type")
              in
-             let tuple = Expr.Values { elements; type' = tupleType } in
+             let tuple = Expr.values elements in
              let zippedTuple =
                Expr.Zip
                  { zipArg = tuple
                  ; nestCount = zipDepth
                  ; type' =
-                     tupleType
+                     elements
+                     |> List.map ~f:Expr.type'
                      |> List.map ~f:(stripCollections zipDepth)
                      |> Type.Tuple
                      |> typeCollectionWrapper
                  }
              in
              zippedTuple, cache
-           | _ -> raise (TupleRequest.unexpected ~actual:request ~expected:"tuple"))
+           | _ ->
+             raise (TupleRequest.unexpected ~actual:request ~expected:"tuple" ~at:"4"))
         | Some (CollectionCache cache) ->
           let restRequest =
             match request with
@@ -345,7 +354,9 @@ let rec reduceTuplesInExpr (request : TupleRequest.t) expr =
                 [%equal: TupleRequest.collectionType] collectionType cache.collectionType);
               subRequest
             | Whole -> Whole
-            | _ -> raise @@ TupleRequest.unexpected ~actual:request ~expected:"collection"
+            | _ ->
+              raise
+              @@ TupleRequest.unexpected ~actual:request ~expected:"collection" ~at:"5"
           in
           let restType, newTypeCollectionWrapper =
             match elementType with
@@ -400,7 +411,7 @@ let rec reduceTuplesInExpr (request : TupleRequest.t) expr =
       match request with
       | Collection { subRequest; collectionType = Array _ } -> subRequest
       | Whole -> Whole
-      | _ -> raise (TupleRequest.unexpected ~actual:request ~expected:"array")
+      | _ -> raise (TupleRequest.unexpected ~actual:request ~expected:"array" ~at:"6")
     in
     let%map elements =
       elements |> List.map ~f:(reduceTuplesInExpr elementRequest) |> ReduceTupleState.all
@@ -455,7 +466,7 @@ let rec reduceTuplesInExpr (request : TupleRequest.t) expr =
       match request with
       | Collection { subRequest; collectionType = Sigma _ } -> subRequest
       | Whole -> Whole
-      | _ -> raise (TupleRequest.unexpected ~actual:request ~expected:"sigma")
+      | _ -> raise (TupleRequest.unexpected ~actual:request ~expected:"sigma" ~at:"7")
     in
     let bodyRequestSubs =
       List.zip_exn type'.parameters indices
@@ -509,7 +520,8 @@ let rec reduceTuplesInExpr (request : TupleRequest.t) expr =
          else return ()
        in
        Expr.Values { elements; type' }
-     | Collection _ -> raise (TupleRequest.unexpected ~actual:request ~expected:"tuple"))
+     | Collection _ ->
+       raise (TupleRequest.unexpected ~actual:request ~expected:"tuple" ~at:"8"))
   | BoxValue { box; type' } ->
     let boxType =
       match Expr.type' box with
@@ -591,12 +603,12 @@ let rec reduceTuplesInExpr (request : TupleRequest.t) expr =
           ; collectionType = Array { element = elementType; size = shapeHead }
           }
     in
-    (* Stdio.print_endline *)
-    (* (Printf.sprintf *)
-    (* "Subarray: \nshape: %s\ntype: %s\nrequest: %s" *)
-    (* (Sexp.to_string_hum ([%sexp_of: Index.shape] resultShape)) *)
-    (* (Sexp.to_string_hum ([%sexp_of: Nested.Type.t] type')) *)
-    (* (Sexp.to_string_hum ([%sexp_of: TupleRequest.t] request))); *)
+    (* Stdio.prerr_endline *)
+    (*   (Printf.sprintf *)
+    (*      "Subarray: \nshape: %s\ntype: %s\nrequest: %s" *)
+    (*      (Sexp.to_string_hum ([%sexp_of: Index.shape] resultShape)) *)
+    (*      (Sexp.to_string_hum ([%sexp_of: Nested.Type.t] type')) *)
+    (*      (Sexp.to_string_hum ([%sexp_of: TupleRequest.t] request))); *)
     let cellRequest = stripShapeFromRequest ~shape:resultShape request in
     let arrayArgRequest =
       addShapeToRequest ~shape:originalShape (Expr.type' arrayArg) cellRequest
@@ -617,7 +629,7 @@ let rec reduceTuplesInExpr (request : TupleRequest.t) expr =
           TupleRequest.Elements
             (List.map derefs ~f:(fun { i; rest } ->
                TupleRequest.{ i; rest = wrapper rest }))
-        | _ -> raise (TupleRequest.unexpected ~actual:request ~expected:"tuple"))
+        | _ -> raise (TupleRequest.unexpected ~actual:request ~expected:"tuple" ~at:"9"))
       else (
         match request with
         | TupleRequest.Whole -> TupleRequest.Whole
@@ -627,7 +639,7 @@ let rec reduceTuplesInExpr (request : TupleRequest.t) expr =
             (fun r -> wrapper @@ Collection { subRequest = r; collectionType })
             subRequest
         | TupleRequest.Element _ | TupleRequest.Elements _ ->
-          raise (TupleRequest.unexpected ~actual:request ~expected:"collection"))
+          raise (TupleRequest.unexpected ~actual:request ~expected:"collection" ~at:"10"))
     in
     let%map zipArg =
       reduceTuplesInExpr (interchangeCollections nestCount (fun r -> r) request) zipArg
@@ -662,7 +674,8 @@ let rec reduceTuplesInExpr (request : TupleRequest.t) expr =
         | TupleRequest.Collection { subRequest; collectionType = _ } ->
           stripCollections (nestCount - 1) subRequest
         | TupleRequest.Whole -> Whole
-        | _ -> raise (TupleRequest.unexpected ~actual:request ~expected:"collection"))
+        | _ ->
+          raise (TupleRequest.unexpected ~actual:request ~expected:"collection" ~at:"11"))
     in
     (match request with
      | Whole ->
@@ -687,7 +700,8 @@ let rec reduceTuplesInExpr (request : TupleRequest.t) expr =
          | _ -> raise (Unreachable.Error "expected tuple type")
        in
        Expr.Unzip { unzipArg; type' }
-     | Collection _ -> raise (TupleRequest.unexpected ~actual:request ~expected:"tuple"))
+     | Collection _ ->
+       raise (TupleRequest.unexpected ~actual:request ~expected:"tuple" ~at:"12"))
   | IndexLet { indexArgs; body; type' } ->
     let%map body = reduceTuplesInExpr request body
     and indexArgs =
@@ -707,6 +721,8 @@ let rec reduceTuplesInExpr (request : TupleRequest.t) expr =
     in
     Expr.IndexLet { indexArgs; body; type' }
   | Let { args; body; type' } ->
+    (* let' |> [%sexp_of: Nested.t] |> Sexp.to_string_hum |> Stdio.prerr_endline; *)
+    (* type' |> [%sexp_of: Nested.Type.t] |> Sexp.to_string_hum |> Stdio.prerr_endline; *)
     let%bind body = reduceTuplesInExpr request body in
     let type' = reduceTuplesType request type' in
     let%bind caches = ReduceTupleState.getCaches () in
@@ -791,7 +807,8 @@ let rec reduceTuplesInExpr (request : TupleRequest.t) expr =
       | Elements [ { i = 0; rest = mapRequest }; { i = 1; rest = consumerRequest } ] ->
         mapRequest, consumerRequest, wrapperForPair
       | Elements _ -> raise (Unreachable.Error "invalid tuple indices of loop block")
-      | Collection _ -> raise (TupleRequest.unexpected ~actual:request ~expected:"tuple")
+      | Collection _ ->
+        raise (TupleRequest.unexpected ~actual:request ~expected:"tuple" ~at:"14")
     in
     let%bind consumerUsages, consumer =
       match consumer, consumerRequest with
@@ -941,7 +958,9 @@ let rec reduceTuplesInExpr (request : TupleRequest.t) expr =
             match rest with
             | Whole -> TupleRequest.Whole
             | Collection { subRequest; collectionType = _ } -> subRequest
-            | _ -> raise @@ TupleRequest.unexpected ~actual:rest ~expected:"collection"
+            | _ ->
+              raise
+              @@ TupleRequest.unexpected ~actual:rest ~expected:"collection" ~at:"16"
           in
           let resultId = List.nth_exn mapResults i in
           if Set.mem consumerUsages resultId
@@ -970,7 +989,7 @@ let rec reduceTuplesInExpr (request : TupleRequest.t) expr =
           in
           resultIdsAndRequest, mapWrapper
         | Collection _ ->
-          raise @@ TupleRequest.unexpected ~actual:mapRequest ~expected:"tuple"
+          raise @@ TupleRequest.unexpected ~actual:mapRequest ~expected:"tuple" ~at:"17"
       in
       let mapResults, _ = List.unzip resultIdsAndRequests in
       let resultRequestsFromMap = resultIdsAndRequests in

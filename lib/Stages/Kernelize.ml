@@ -193,10 +193,8 @@ and getIterationSpaceConsumer consumer : int =
   in
   match consumer with
   | None -> 0
-  | Some (Reduce r) ->
-    getIterationSpace r.zero + (getSizeFromDim r.d * getIterationSpace r.body)
-  | Some (Fold f) ->
-    getIterationSpace f.zeroArg.zeroValue + (getSizeFromDim f.d * getIterationSpace f.body)
+  | Some (Reduce r) -> getIterationSpace r.zero + getIterationSpace r.body
+  | Some (Fold f) -> getIterationSpace f.zeroArg.zeroValue + getIterationSpace f.body
   | Some (Scatter s) -> Int.max (getSizeFromDim s.dOut) (getSizeFromDim s.dIn)
 ;;
 
@@ -212,7 +210,9 @@ let rec findAllParOptions (expr : Nested.t) (structureMap : IndexMode.cuda_t)
   =
   match expr with
   | Literal lit -> Literal lit, []
-  | ScalarPrimitive prim -> ScalarPrimitive prim, []
+  | ScalarPrimitive { op; args; type' } ->
+    let _, paths = findAllParOptionsList args structureMap in
+    ScalarPrimitive { op; args; type' }, paths
   | Ref ref -> Ref ref, []
   | Frame { elements; dimension; type' } ->
     let elements, paths = findAllParOptionsList elements structureMap in
@@ -1163,6 +1163,16 @@ let kernelize (expr : Nested.t) : (CompilerState.state, Corn.t, _) State.t =
   Stdio.prerr_endline "Fuse and Simplify done";
   (* This stage consists of 2 steps: collect possible paths and rewrite the program using the best one *)
   let _, paths = findAllParOptions expr IndexMode.defaultCUDA in
+  (* expr *)
+  (* |> [%sexp_of: Nested.t] *)
+  (* |> Sexp.to_string_hum *)
+  (* |> Printf.sprintf "expr in kernelize: \n%s" *)
+  (* |> Stdio.prerr_endline; *)
+  (* paths *)
+  (* |> [%sexp_of: parPath list] *)
+  (* |> Sexp.to_string_hum *)
+  (* |> Printf.sprintf "Paths in kernelize: \n%s" *)
+  (* |> Stdio.prerr_endline; *)
   match paths with
   | [] -> State.return @@ rewriteWithPar expr (Map.empty (module Identifier))
   | hd :: tl ->

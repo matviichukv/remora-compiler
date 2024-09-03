@@ -1536,6 +1536,17 @@ module TypeCheck = struct
            ; type' = T.arrayType bodyTyped
            })
     | U.TupleExpr t ->
+      (* let foo element = *)
+      (*   check env element *)
+      (*   |> CompilerState.map ~f:(function *)
+      (*     | Atom a -> a *)
+      (*     | Array arr -> *)
+      (*       let type' = Typed.Expr.arrayType arr in *)
+      (*       (match type' with *)
+      (*        | ArrayRef _ -> _ *)
+      (*        | Arr { element; shape = [] } -> _ *)
+      (*        | Arr { element = _; shape } -> _)) *)
+      (* in *)
       let%bind elements =
         t.elem |> List.map ~f:(checkAndExpectAtom env) |> CheckerState.all
       in
