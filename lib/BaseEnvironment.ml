@@ -353,7 +353,7 @@ module Stdlib : S = struct
                 (Pi (@original-shape @result-shape @cell-shape l)
                   (Forall (t)
                     (-> ([t @original-shape @cell-shape]
-                          [int l])
+                         [int l])
                         [t @result-shape @cell-shape])))
                 |}
             }

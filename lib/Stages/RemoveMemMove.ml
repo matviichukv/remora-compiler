@@ -333,7 +333,12 @@ let constructDataFlowMap (expr : captures Acorn.t) =
     match statement with
     | Putmem _ -> map
     | MapKernel
-        { kernel = { map = kernelMap; mapResultMemDeviceInterim; mapResultMemHostFinal }
+        { kernel =
+            { label = _
+            ; map = kernelMap
+            ; mapResultMemDeviceInterim
+            ; mapResultMemHostFinal
+            }
         ; captures = { exprCaptures; indexCaptures = _; memCaptures }
         ; blocks = _
         ; threads = _
@@ -385,8 +390,17 @@ let constructDataFlowMap (expr : captures Acorn.t) =
     | Acorn.Mem.Values { elements; type' = _ } ->
       List.foldi elements ~init:map ~f:(fun index map e ->
         memToDFCopy e map ?f:(Some (fun tuple -> DFDeref { tuple; index })) targetMemDf)
-    | Acorn.Mem.Index { mem; offset = _; type' = _ } -> memToDFCopy mem map targetMemDf
-    | Acorn.Mem.TupleDeref _ -> raise Unimplemented.default
+    | Acorn.Mem.Index { mem; offset = _; type' = _ } ->
+      memToDFCopy ?f:(Some f) mem map targetMemDf
+    | Acorn.Mem.TupleDeref { tuple; index; type' = _ } ->
+      memToDFCopy
+        tuple
+        map
+        targetMemDf
+        ?f:
+          (Some
+             (fun df ->
+               DFTuple (List.append (List.init index ~f:(fun _ -> DFTuple [])) [ df ])))
   and productionToDF prod =
     match prod with
     | ProductionTuple { elements; type' = _ } ->
@@ -690,7 +704,7 @@ and constructReplaceMapMapKernel
   =
   fun mapKernel dfMap ->
   match mapKernel with
-  | { map; mapResultMemDeviceInterim = _; mapResultMemHostFinal = _ } ->
+  | { label = _; map; mapResultMemDeviceInterim = _; mapResultMemHostFinal = _ } ->
     constructReplaceMapMapInKernel map dfMap
 
 and constructReplaceMapMapInKernel
@@ -773,8 +787,9 @@ and followChain id dfMap : Acorn.Mem.t option =
       traverseDFEntry df ~derefStack ~traversedHostToDevice:true ~traversedDeviceToHost
     | DFDeviceToHostCopy df ->
       traverseDFEntry df ~derefStack ~traversedHostToDevice ~traversedDeviceToHost:true
-    | DFIterateOver df ->
-      traverseDFEntry df ~derefStack ~traversedHostToDevice ~traversedDeviceToHost
+    | DFIterateOver _ ->
+      NothingFound
+      (* traverseDFEntry df ~derefStack ~traversedHostToDevice ~traversedDeviceToHost *)
     | DFDeref { index; tuple } ->
       traverseDFEntry
         tuple
@@ -1084,12 +1099,12 @@ and removeHostToDevCopyStatement
   | ReifyShapeIndex i -> ReifyShapeIndex i
 
 and removeHostToDevCopyMapKernel
-  { map; mapResultMemDeviceInterim; mapResultMemHostFinal }
+  { label; map; mapResultMemDeviceInterim; mapResultMemHostFinal }
   replaceMap
   exprToMemRefs
   =
   let map = removeHostToDevCopyMapInKernel map replaceMap exprToMemRefs in
-  { map; mapResultMemDeviceInterim; mapResultMemHostFinal }
+  { label; map; mapResultMemDeviceInterim; mapResultMemHostFinal }
 
 and removeHostToDevCopyMapInKernel
   { frameShape; indexMode; mapArgs; mapMemArgs; mapIotas; mapBody; type' }
@@ -1205,7 +1220,11 @@ and removeHostToDevCopyCaptures
       let captures = findAllCapturesInMem mem in
       List.map captures ~f:(fun { id; type' } -> id, type'))
     |> List.append moveCaptures
-    |> Map.of_alist_exn (module Identifier)
+    |> Map.of_alist_reduce
+         (module Identifier)
+         ~f:(fun a b ->
+           assert (Acorn.Type.equal a b);
+           a)
   in
   let memCaptures =
     Map.merge_skewed memCaptures memCapturesAddition ~combine:(fun ~key:_ v _ -> v)
@@ -1282,7 +1301,8 @@ and findUsesStatement : type l. (l, captures) statement -> (Identifier.t, _) Set
   = function
   | Putmem { expr; addr = _; type' = _ } -> findUses expr
   | MapKernel
-      { kernel = { map; mapResultMemDeviceInterim = _; mapResultMemHostFinal = _ }
+      { kernel =
+          { label = _; map; mapResultMemDeviceInterim = _; mapResultMemHostFinal = _ }
       ; captures
       ; blocks = _
       ; threads = _
@@ -1590,7 +1610,7 @@ and removeReturnValueStatement : type l. (l, _) statement -> (l, _) statement =
   match statement with
   | Putmem { expr; addr; type' } -> Putmem { expr; addr; type' }
   | MapKernel
-      { kernel = { map; mapResultMemDeviceInterim; mapResultMemHostFinal = _ }
+      { kernel = { label; map; mapResultMemDeviceInterim; mapResultMemHostFinal = _ }
       ; captures
       ; blocks
       ; threads
@@ -1598,7 +1618,7 @@ and removeReturnValueStatement : type l. (l, _) statement -> (l, _) statement =
     let mapResultMemHostFinal =
       Acorn.Mem.Values { elements = []; type' = Acorn.Type.Tuple [] }
     in
-    let kernel = { map; mapResultMemDeviceInterim; mapResultMemHostFinal } in
+    let kernel = { label; map; mapResultMemDeviceInterim; mapResultMemHostFinal } in
     MapKernel { kernel; captures; blocks; threads }
   | ComputeForSideEffects expr ->
     (match removeReturnValue expr with

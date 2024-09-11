@@ -193,7 +193,8 @@ module Expr = struct
     | MapBodySubMap of mapBodySubMap
 
   and mapKernel =
-    { frameShape : Index.shapeElement
+    { label : Identifier.t
+    ; frameShape : Index.shapeElement
     ; indexMode : Nested.Expr.indexMode option
     ; mapArgs : mapArg list
     ; mapIotas : Identifier.t list
@@ -609,7 +610,8 @@ module Expr = struct
       | MapBodySubMap subMap -> sexp_of_mapBodySubMap subMap
 
     and sexp_of_mapKernel
-      ({ indexMode
+      ({ label
+       ; indexMode
        ; frameShape
        ; mapArgs
        ; mapIotas
@@ -622,6 +624,7 @@ module Expr = struct
       =
       Sexp.List
         ([ Sexp.Atom "map-kernel"
+         ; Sexp.Atom (Identifier.show label)
          ; Sexp.List
              [ Sexp.Atom "index-mode"
              ; [%sexp_of: Nested.Expr.indexMode option] indexMode

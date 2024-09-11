@@ -628,7 +628,8 @@ and annotateStatement
   = function
   | Putmem { addr; expr; type' } -> Putmem { addr; expr = annotateExpr expr; type' }
   | MapKernel
-      { kernel = { map = mapKernel; mapResultMemDeviceInterim; mapResultMemHostFinal }
+      { kernel =
+          { label; map = mapKernel; mapResultMemDeviceInterim; mapResultMemHostFinal }
       ; captures = ()
       ; blocks
       ; threads
@@ -667,7 +668,8 @@ and annotateStatement
     in
     let captures, mapKernel = annotateMapInKernel mapKernel in
     MapKernel
-      { kernel = { map = mapKernel; mapResultMemDeviceInterim; mapResultMemHostFinal }
+      { kernel =
+          { label; map = mapKernel; mapResultMemDeviceInterim; mapResultMemHostFinal }
       ; captures
       ; blocks
       ; threads

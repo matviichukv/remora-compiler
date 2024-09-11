@@ -120,7 +120,7 @@ module Type = struct
       | Tuple of tuple
       | Atom of atom
       | Array of array
-    [@@deriving compare, sexp_of]
+    [@@deriving equal, compare, sexp_of]
   end
 
   include T
@@ -495,7 +495,8 @@ module Expr = struct
     }
 
   and 'c mapKernel =
-    { map : 'c mapInKernel
+    { label : Identifier.t
+    ; map : 'c mapInKernel
     ; mapResultMemDeviceInterim : Mem.t
         (** a memory location where map results are written by the body *)
     ; mapResultMemHostFinal : Mem.t
@@ -1076,9 +1077,10 @@ module Expr = struct
          @ [ sexp_of_mapBody sexp_of_c mapBody ])
 
     and sexp_of_mapKernel : type c. (c -> Sexp.t) -> c mapKernel -> Sexp.t =
-      fun sexp_of_c { map; mapResultMemDeviceInterim; mapResultMemHostFinal } ->
+      fun sexp_of_c { label; map; mapResultMemDeviceInterim; mapResultMemHostFinal } ->
       Sexp.List
         [ Sexp.List [ Sexp.Atom "map"; sexp_of_mapInKernel sexp_of_c map ]
+        ; Sexp.Atom (Identifier.show label)
         ; Sexp.List
             [ Sexp.Atom "map-result-mem-interim"
             ; Mem.sexp_of_t mapResultMemDeviceInterim

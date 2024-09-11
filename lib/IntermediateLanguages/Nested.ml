@@ -460,10 +460,9 @@ module Expr = struct
     and sexp_of_tupleDeref { tuple; index; type' = _ } =
       Sexp.List [ Sexp.Atom [%string "#%{index#Int}"]; sexp_of_t tuple ]
 
-    and sexp_of_values ({ elements; type' } : values) =
+    and sexp_of_values ({ elements; type' = _ } : values) =
       Sexp.List
-        (Sexp.Atom "values"
-         :: List.sexp_of_t Type.sexp_of_t type'
+        (Sexp.Atom "values" (* :: List.sexp_of_t Type.sexp_of_t type' *)
          :: List.map elements ~f:sexp_of_t)
 
     and sexp_of_boxValue { box; type' = _ } =
@@ -486,16 +485,14 @@ module Expr = struct
 
     and sexp_of_letArg { binding; value } =
       Sexp.List
-        [ Sexp.Atom (Identifier.show binding)
-        ; Type.sexp_of_t (type' value)
+        [ Sexp.Atom (Identifier.show binding) (* ; Type.sexp_of_t (type' value) *)
         ; sexp_of_t value
         ]
 
-    and sexp_of_let { args; body; type' } =
+    and sexp_of_let { args; body; type' = _ } =
       Sexp.List
         [ Sexp.Atom "let"
-        ; Sexp.List (List.map args ~f:sexp_of_letArg)
-        ; Type.sexp_of_t type'
+        ; Sexp.List (List.map args ~f:sexp_of_letArg) (* ; Type.sexp_of_t type' *)
         ; sexp_of_t body
         ]
 

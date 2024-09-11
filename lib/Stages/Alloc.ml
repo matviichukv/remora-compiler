@@ -486,7 +486,7 @@ and updateMemSourceEnvFromStatement
   fun (stmnt : (_, _) Acorn.Expr.statement) ->
     match stmnt with
     | MapKernel
-        { kernel = { map; mapResultMemDeviceInterim; mapResultMemHostFinal }
+        { kernel = { label = _; map; mapResultMemDeviceInterim; mapResultMemHostFinal }
         ; captures = _
         ; blocks = _
         ; threads = _
@@ -1141,65 +1141,65 @@ let rec allocRequest
   | Ref { id; type' } ->
     unwrittenExprToAllocResult (Ref { id; type' = canonicalizeType type' })
   | Frame { elements; dimension = _; type' } ->
-    (* let type' = canonicalizeType type' in *)
-    (* let%bind mem = getMemForResult type' "frame-array" in *)
-    (* let%map statements = *)
-    (*   elements *)
-    (*   |> List.mapi ~f:(fun offset element -> *)
-    (*     let elementType = Corn.Expr.type' element in *)
-    (*     let elementTarget = *)
-    (*       Some *)
-    (*         (TargetValue *)
-    (*            (Mem.Index *)
-    (*               { mem *)
-    (*               ; offset = Index.dimensionConstant offset *)
-    (*               ; type' = canonicalizeType elementType *)
-    (*               })) *)
-    (*     in *)
-    (*     allocStatement ~writeToAddr:elementTarget element) *)
-    (*   |> all *)
-    (* in *)
-    statementToAllocResult ~mem (Statements statements)
     let type' = canonicalizeType type' in
     let%bind mem = getMemForResult type' "frame-array" in
-    let%bind statementsCompute, elements =
+    let%map statements =
       elements
       |> List.mapi ~f:(fun offset element ->
         let elementType = Corn.Expr.type' element in
-        let elementType = canonicalizeType elementType in
-        let%bind elementMem = malloc ~mallocLoc elementType "element" in
-        (* let%bind elementMem = getMemForResult elementType "element" in *)
-        let%map elementRes =
-          allocStatement ~writeToAddr:(Some (TargetValue elementMem)) element
-        in
-        elementRes, (elementMem, offset))
-      |> all
-      |> AllocAcc.map ~f:List.unzip
-    in
-    let%map statementsWrite =
-      elements
-      |> List.map ~f:(fun (elementMem, offset) ->
-        let elementType = Mem.type' elementMem in
         let elementTarget =
           Some
             (TargetValue
                (Mem.Index
-                  { mem; offset = Index.dimensionConstant offset; type' = elementType }))
+                  { mem
+                  ; offset = Index.dimensionConstant offset
+                  ; type' = canonicalizeType elementType
+                  }))
         in
-        let value : (l, unit) Acorn.Expr.t =
-          Expr.(Getmem { addr = elementMem; type' = elementType })
-        in
-        let%map res =
-          partialUnwrittenExprToAllocResult
-            ~targetAddr:elementTarget
-            ~exprToWriteExtractor:(fun e -> e)
-            value
-        in
-        res.statement)
+        allocStatement ~writeToAddr:elementTarget element)
       |> all
     in
-    let statements = List.append statementsCompute statementsWrite in
     statementToAllocResult ~mem (Statements statements)
+    (* let type' = canonicalizeType type' in *)
+    (* let%bind mem = getMemForResult type' "frame-array" in *)
+    (* let%bind statementsCompute, elements = *)
+    (*   elements *)
+    (*   |> List.mapi ~f:(fun offset element -> *)
+    (*     let elementType = Corn.Expr.type' element in *)
+    (*     let elementType = canonicalizeType elementType in *)
+    (*     let%bind elementMem = malloc ~mallocLoc elementType "element" in *)
+    (*     (\* let%bind elementMem = getMemForResult elementType "element" in *\) *)
+    (*     let%map elementRes = *)
+    (*       allocStatement ~writeToAddr:(Some (TargetValue elementMem)) element *)
+    (*     in *)
+    (*     elementRes, (elementMem, offset)) *)
+    (*   |> all *)
+    (*   |> AllocAcc.map ~f:List.unzip *)
+    (* in *)
+    (* let%map statementsWrite = *)
+    (*   elements *)
+    (*   |> List.map ~f:(fun (elementMem, offset) -> *)
+    (*     let elementType = Mem.type' elementMem in *)
+    (*     let elementTarget = *)
+    (*       Some *)
+    (*         (TargetValue *)
+    (*            (Mem.Index *)
+    (*               { mem; offset = Index.dimensionConstant offset; type' = elementType })) *)
+    (*     in *)
+    (*     let value : (l, unit) Acorn.Expr.t = *)
+    (*       Expr.(Getmem { addr = elementMem; type' = elementType }) *)
+    (*     in *)
+    (*     let%map res = *)
+    (*       partialUnwrittenExprToAllocResult *)
+    (*         ~targetAddr:elementTarget *)
+    (*         ~exprToWriteExtractor:(fun e -> e) *)
+    (*         value *)
+    (*     in *)
+    (*     res.statement) *)
+    (*   |> all *)
+    (* in *)
+    (* let statements = List.append statementsCompute statementsWrite in *)
+    (* statementToAllocResult ~mem (Statements statements) *)
   | BoxValue { box; type' } ->
     let%bind box = allocExpr ~writeToAddr:None box in
     unwrittenExprToAllocResult @@ BoxValue { box; type' = canonicalizeType type' }
@@ -1338,7 +1338,8 @@ let rec allocRequest
       ~outerBindingsForMapBody
       ~writeToAddr:targetAddr
       Corn.Expr.
-        { frameShape
+        { label = _
+        ; frameShape
         ; indexMode
         ; mapArgs
         ; mapIotas
@@ -1513,7 +1514,12 @@ let rec allocRequest
     in
     let mapKernel =
       Expr.MapKernel
-        { kernel = { map = mapInKernel; mapResultMemDeviceInterim; mapResultMemHostFinal }
+        { kernel =
+            { label = mapKernel.label
+            ; map = mapInKernel
+            ; mapResultMemDeviceInterim
+            ; mapResultMemHostFinal
+            }
         ; captures = ()
         ; blocks
         ; threads

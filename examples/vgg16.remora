@@ -1,9 +1,11 @@
 ;; ---------------------------- UTILITIES ---------------------------------------------
 ;; @s is the shape of the array, l is length of index
 ;;(define (indices-of{| @s l}) : [int @s l])
-(define (indices-of/2{| d1 d2}): [int d1 d2 2]
-  (let [d1-val (reify-dimension d2)]
-    ((fn ([id [int]]) [(/ id d1-val) (% id d1-val)]) iota{| [d1 d2]})))
+;; (define (indices-of/2{| d1 d2}): [int d1 d2 2]
+;;   (let [d1-val (reify-dimension d2)]
+;;     ((fn ([id [int]]) [(/ id d1-val) (% id d1-val)]) iota{| [d1 d2]})))
+(define (indices-of/2{| d1 d2}) : [int d1 d2 2]
+  ((fn ([id1 [int]]) ((fn ([id2 [int]]) [id1 id2]) iota{|[d2]})) iota{|[d1]}))
 
 ;; (define (foo {t @t2 t3} {d1 d2 @s}
 ;;              ([arr [t d1 @s]] [bar [@t2 d1 d2]] -> [t3 d2 @s])) ...)
@@ -267,9 +269,12 @@
 (define input (int->float iota{| [3 224 224]}))
 ;; Block 1
 (define out1 (full-conv-process{| 64 2 223 2 224 1 1} input))
+;; (define weights (int->float iota{|[1 3 3 3]}))
+;; (define out1 (conv-2d-channel{| 223 2 2 1 1 0} input weights 0.0))
 out1
 ;; (define out2 (full-conv-process{| 64 63 223 2 224 1 1} out1))
 ;; (define out3 (max-pool-2d{| 223 1 2 112} out2))
+;; out3
 ;; Block 2
 ;; (define out4 (full-conv-process{| 128 63 111 2 112 1 1} out3))
 ;; (define out5 (full-conv-process{| 128 127 111 2 112 1 1} out4))

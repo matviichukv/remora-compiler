@@ -107,8 +107,8 @@ let command =
        | Some filename -> Stdio.In_channel.create filename
      in
      let program = Stdio.In_channel.input_all inputChannel in
-     let result = Compiler.Default.compileStringToString program in
      fun () ->
+       let result = Compiler.Default.compileStringToString program in
        match result with
        | MOk outProgram ->
          (match output with

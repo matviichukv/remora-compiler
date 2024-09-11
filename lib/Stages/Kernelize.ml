@@ -674,12 +674,15 @@ let rec rewriteWithPar (expr : Nested.t) loopBlockParTable : Corn.t =
         ; type'
         } as lb
       when Map.mem loopBlockParTable label ->
+      Stdio.prerr_endline (Identifier.show label);
+      Stdio.prerr_endline (Sexp.to_string_hum ([%sexp_of: Nested.Type.t list] type'));
       let blocks, threads = computeKernelSize lb loopBlockParTable in
       let indexMode = Map.find loopBlockParTable label in
       let mapBody = exprToMapBody mapBody loopBlockParTable in
       let type' = List.nth_exn type' 0 in
       let lb : Corn.Expr.mapKernel =
-        { indexMode
+        { label
+        ; indexMode
         ; frameShape
         ; mapArgs
         ; mapIotas
@@ -737,6 +740,7 @@ let rec rewriteWithPar (expr : Nested.t) loopBlockParTable : Corn.t =
         ; type'
         } ->
       let mapBody = rewriteWithParHelper mapBody in
+      (* let type' = [ List.nth_exn type' 0 ] in *)
       Corn.Expr.LoopBlock
         { indexMode = None (* we would go to branch above otherwise *)
         ; frameShape
@@ -783,11 +787,13 @@ let rec rewriteWithPar (expr : Nested.t) loopBlockParTable : Corn.t =
       let args = List.map args ~f:rewriteWithParHelper in
       let op = convertScalarOp op in
       ScalarPrimitive { op; args; type' }
-    | TupleDeref { index; tuple; type' } ->
+    | TupleDeref { index; tuple; type' = _ } ->
       let tuple = rewriteWithParHelper tuple in
       (match tuple with
        | Values { elements; type' = _ } -> List.nth_exn elements index
-       | tuple -> TupleDeref { index; tuple; type' })
+       | tuple ->
+         Corn.Expr.tupleDeref ~tuple ~index
+         (* TupleDeref { index; tuple; type' = Corn.Expr.type' tuple } *))
     | ContiguousSubArray { arrayArg; indexArg; originalShape; resultShape; type' } ->
       let arrayArg = rewriteWithParHelper arrayArg in
       let indexArg = rewriteWithParHelper indexArg in
@@ -1110,12 +1116,10 @@ and exprToMapBody (expr : Nested.t) loopBlockParTable =
     let possibleSubMap = exprToMapBodySubMap expr loopBlockParTable in
     (match possibleSubMap with
      | None -> MapBodyExpr (rewriteWithParDevice expr loopBlockParTable)
-     | Some subMap -> MapBodySubMap subMap)
+     | Some subMap -> subMap)
   | rest -> MapBodyExpr (rewriteWithParDevice rest loopBlockParTable)
 
-and exprToMapBodySubMap (expr : Nested.t) loopBlockParTable
-  : Corn.Expr.mapBodySubMap option
-  =
+and exprToMapBodySubMap (expr : Nested.t) loopBlockParTable : Corn.Expr.mapBody option =
   match expr with
   | LoopBlock
       { frameShape
@@ -1130,9 +1134,10 @@ and exprToMapBodySubMap (expr : Nested.t) loopBlockParTable
       } ->
     let indexMode = Map.find loopBlockParTable label in
     let mapBody = exprToMapBody mapBody loopBlockParTable in
-    let type' = Type.Tuple type' in
+    let type' = List.nth_exn type' 0 in
     let mapKernel : Corn.Expr.mapKernel =
-      { frameShape
+      { label
+      ; frameShape
       ; indexMode
       ; mapArgs
       ; mapIotas
@@ -1142,19 +1147,37 @@ and exprToMapBodySubMap (expr : Nested.t) loopBlockParTable
       ; type'
       }
     in
-    Some (MapBodyMap mapKernel)
+    Some (MapBodySubMap (MapBodyValues [ MapBodyMap mapKernel; MapBodyValues [] ]))
   | TupleDeref { index; tuple; type' = _ } ->
     let tuple = exprToMapBodySubMap tuple loopBlockParTable in
     (match tuple with
      | None -> None
-     | Some tuple -> Some (MapBodyDeref { index; tuple }))
+     | Some tuple ->
+       (match tuple with
+        | Corn.Expr.MapBodyExpr _ -> None
+        | Corn.Expr.MapBodySubMap (Corn.Expr.MapBodyValues values) ->
+          Some (MapBodySubMap (List.nth_exn values index))
+        | Corn.Expr.MapBodySubMap subMap ->
+          Some (MapBodySubMap (MapBodyDeref { tuple = subMap; index }))))
   | Values { elements; type' = _ } ->
     let elements =
       elements |> List.map ~f:(fun e -> exprToMapBodySubMap e loopBlockParTable)
     in
-    let allGood = List.for_all elements ~f:Option.is_some in
+    let allGood =
+      List.for_all elements ~f:(fun o ->
+        match o with
+        | Some (MapBodySubMap _) -> true
+        | _ -> false)
+    in
     if allGood
-    then Some (MapBodyValues (List.map elements ~f:(fun e -> Option.value_exn e)))
+    then (
+      let elements =
+        List.map elements ~f:(fun o ->
+          match o with
+          | Some (MapBodySubMap subMap) -> subMap
+          | _ -> raise Unreachable.default)
+      in
+      Some (MapBodySubMap (MapBodyValues elements)))
     else None
   | _ -> None
 ;;
