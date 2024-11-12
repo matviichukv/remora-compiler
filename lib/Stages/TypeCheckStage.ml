@@ -80,7 +80,9 @@ module M (SB : Source.BuilderT) = struct
         CompilerState.run (BaseEnvironment.Stdlib.make ()) state
       in
       match CompilerState.run (TypeCheck.check ~env input) state with
-      | MOk _ as expr -> expr
+      | MOk _ as expr -> 
+        Stdio.prerr_endline "Typecheck done";
+        expr
       | Errors errs ->
         Errors
           (NeList.map errs ~f:(fun { elem = err; source } ->

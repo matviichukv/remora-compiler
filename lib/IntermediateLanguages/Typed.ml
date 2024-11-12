@@ -317,11 +317,12 @@ module Expr = struct
     | Primitive of primitive
     | Lift of lift
     | ContiguousSubArray of contiguousSubArray
+    | TupleExpr of tuple
     | TupleDeref of tupleDeref
 
   and tuple =
-    { elements : atom list
-    ; type' : Type.tuple
+    { components : array list     (*Consider renaming to values? to avoid confusion with array atoms*)
+    ; type' : Type.array        
     }
 
   and atom =
@@ -330,7 +331,6 @@ module Expr = struct
     | IndexLambda of indexLambda
     | Box of box
     | Literal of literal
-    | TupleExpr of tuple
 
   and t =
     | Array of array
@@ -342,7 +342,6 @@ module Expr = struct
     | TypeLambda typeLambda -> Forall typeLambda.type'
     | IndexLambda indexLambda -> Pi indexLambda.type'
     | Box box -> Sigma box.type'
-    | TupleExpr tuple -> Tuple tuple.type'
     (* NOTE: we choose int32 to be default for literals *)
     | Literal (IntLiteral _) -> Literal (IntLiteral Int32)
     | Literal (FloatLiteral _) -> Literal FloatLiteral
@@ -364,6 +363,7 @@ module Expr = struct
     | Primitive primitive -> primitive.type'
     | Lift lift -> lift.type'
     | ContiguousSubArray contiguousSubArray -> contiguousSubArray.type'
+    | TupleExpr tuple -> tuple.type'
     | TupleDeref tupleDeref -> tupleDeref.type'
   ;;
 
@@ -802,6 +802,8 @@ module Substitute = struct
           ; l
           ; type' = Type.subTypesIntoArray types type'
           }
+      | TupleExpr { components; type' } ->
+        TupleExpr { components = List.map ~f:(subTypesIntoArray types) components; type' }
       | TupleDeref { expr; position; type' } ->
         TupleDeref
           { expr = subTypesIntoArray types expr
@@ -830,8 +832,6 @@ module Substitute = struct
           ; bodyType = Type.subTypesIntoArray types bodyType
           ; type' = Type.subTypesIntoSigma types type'
           }
-      | TupleExpr { elements; type' } ->
-        TupleExpr { elements = List.map ~f:(subTypesIntoAtom types) elements; type' }
       | Literal _ as literal -> literal
 
     and subTypesIntoTermLambda types { params; body; type' } =
@@ -918,6 +918,11 @@ module Substitute = struct
           ; l = Index.subIndicesIntoDim indices l
           ; type' = Type.subIndicesIntoArray indices type'
           }
+      | TupleExpr { components; type' } ->
+        TupleExpr 
+          { components = List.map ~f:(subIndicesIntoArray indices) components
+          ; type' = Type.subIndicesIntoArray indices type'
+          }
       | TupleDeref { expr; position; type' } ->
         TupleDeref
           { expr = subIndicesIntoArray indices expr
@@ -945,11 +950,6 @@ module Substitute = struct
           ; body = subIndicesIntoArray indices body
           ; bodyType = Type.subIndicesIntoArray indices bodyType
           ; type' = Type.subIndicesIntoSigma indices type'
-          }
-      | TupleExpr { elements; type' } ->
-        TupleExpr
-          { elements = List.map ~f:(subIndicesIntoAtom indices) elements
-          ; type' = List.map ~f:(Type.subIndicesIntoAtom indices) type'
           }
       | Literal _ as literal -> literal
 

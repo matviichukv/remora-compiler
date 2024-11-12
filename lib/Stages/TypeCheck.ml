@@ -923,89 +923,10 @@ module TypeCheck = struct
         zipLists ~expected:paramTypes ~actual:args ~makeError:(fun ea ->
           { source = argsSource; elem = WrongNumberOfArguments ea })
       in
-      let eqShapeElement =
-        Typed.Index.(
-          function
-          | ShapeRef a, ShapeRef b -> Identifier.equal a b
-          | Add a, Add b -> a.const = b.const && Map.equal ( = ) a.refs b.refs
-          | ShapeRef _, Add _ | Add _, ShapeRef _ -> false)
-      in
-      let%bind frames =
-        zippedArgs
-        |> List.map ~f:(fun (param, (_, argType, argSource)) ->
-          (* Check the element type is correct *)
-          let checkElementType =
-            requireType
-              ~expected:(Typed.Type.Atom param.element)
-              ~actual:(Typed.Type.Atom argType.element)
-              ~makeError:(fun ea ->
-                { source = argSource; elem = ArgumentTypeDisagreement ea })
-          in
-          (* Check that the cell shape is correct and get the frame *)
-          let checkCellAndGetFrame =
-            let frame, argCell =
-              List.split_n
-                argType.shape
-                (List.length argType.shape - List.length param.shape)
-            in
-            let cellDisagreementErr =
-              { source = argSource
-              ; elem =
-                  CellShapeDisagreement { expected = param.shape; actual = argType.shape }
-              }
-            in
-            let%bind zippedCellElements =
-              zipLists ~expected:param.shape ~actual:argCell ~makeError:(fun _ ->
-                cellDisagreementErr)
-            in
-            let allShapeElementsAgree =
-              List.for_all zippedCellElements ~f:eqShapeElement
-            in
-            let%map () = CheckerState.require allShapeElementsAgree cellDisagreementErr in
-            frame
-          in
-          let%map () = checkElementType
-          and frame = checkCellAndGetFrame in
-          { elem = frame; source = argSource })
-        |> CheckerState.all
-      in
-      let getPrincipalFrame
-        (headFrame :: restFrames : ('s, Typed.Index.shape) Source.annotate NeList.t)
-        =
-        (* Get the principal frame *)
-        let principalFrame, _ =
-          List.fold
-            restFrames
-            ~init:(headFrame.elem, List.length headFrame.elem)
-            ~f:(fun (maxFrame, maxSize) { elem = curr; source = _ } ->
-              let currSize = List.length curr in
-              if currSize > maxSize then curr, currSize else maxFrame, maxSize)
-        in
-        (* Check that each frame conforms to the principal frame *)
-        let%map () =
-          headFrame :: restFrames
-          |> List.map ~f:(fun { elem = frame; source = frameSource } ->
-            let rec zipAndDropRemainder a b =
-              match a, b with
-              | a :: aRest, b :: bRest -> (a, b) :: zipAndDropRemainder aRest bRest
-              | _, [] | [], _ -> []
-            in
-            let zippedShapeElements = zipAndDropRemainder principalFrame frame in
-            let allShapeElementsAgree =
-              List.for_all zippedShapeElements ~f:eqShapeElement
-            in
-            CheckerState.require
-              allShapeElementsAgree
-              { source = frameSource
-              ; elem =
-                  PrincipalFrameDisagreement { expected = principalFrame; actual = frame }
-              })
-          |> CheckerState.all_unit
-        in
-        principalFrame
-      in
       let%map principalFrame =
-        getPrincipalFrame ({ elem = funcShape; source = funcSource } :: frames)
+        checkFramesAndGetPrincipalFrame 
+        ~funcFrame:{ elem = funcShape; source = funcSource }
+        ~zippedArgs 
       in
       T.Array
         (T.TermApplication
@@ -1535,23 +1456,41 @@ module TypeCheck = struct
            ; body = bodyTyped
            ; type' = T.arrayType bodyTyped
            })
-    | U.TupleExpr t ->
-      (* let foo element = *)
-      (*   check env element *)
-      (*   |> CompilerState.map ~f:(function *)
-      (*     | Atom a -> a *)
-      (*     | Array arr -> *)
-      (*       let type' = Typed.Expr.arrayType arr in *)
-      (*       (match type' with *)
-      (*        | ArrayRef _ -> _ *)
-      (*        | Arr { element; shape = [] } -> _ *)
-      (*        | Arr { element = _; shape } -> _)) *)
-      (* in *)
-      let%bind elements =
-        t.elem |> List.map ~f:(checkAndExpectAtom env) |> CheckerState.all
+    | U.TupleExpr components ->
+      let compsSource = components.source in
+      let%bind comps =
+      components.elem
+        |> List.map ~f:(fun comp ->
+          let compSource = comp.source in
+          let%bind comp = checkAndExpectArray env comp in
+          let%map compType = checkForArrType compSource (T.arrayType comp) in
+          comp, compType, compSource)
+        |> CheckerState.all
       in
-      let type' = List.map ~f:T.atomType elements in
-      CheckerState.return (T.Atom (TupleExpr { elements; type' }))
+      let compAtoms, expectedScalars = 
+        comps
+        |> List.map ~f:(fun (_,compType,_) : (Typed.Type.atom * Typed.Type.arr) -> 
+          ( compType.element, { element = compType.element; shape = []}))
+        |> List.unzip
+      in
+      let%bind zippedArgs =
+        zipLists ~expected:expectedScalars ~actual:comps ~makeError:(fun ea ->
+          { source = compsSource; elem = WrongNumberOfArguments ea })
+      in
+      let%map principalFrame =
+        checkFramesAndGetPrincipalFrame 
+        ~funcFrame:{ 
+          elem = []
+        ; source = source }
+        ~zippedArgs 
+      in
+      T.Array
+        (T.TupleExpr
+          { components = List.map comps ~f:(fun (comp, _, _) -> comp)
+          ; type' = Typed.Type.Arr
+              { element = (Typed.Type.Tuple compAtoms)
+              ; shape = principalFrame }
+          })
     | U.TupleDeref { tuple; position } ->
       (* type check tuple *)
       (* if atom -> grab the nth type *)
@@ -1571,6 +1510,90 @@ module TypeCheck = struct
     | U.CharacterLiteral c -> CheckerState.return (T.Atom (Literal (CharacterLiteral c)))
     | U.BooleanLiteral b -> CheckerState.return (T.Atom (Literal (BooleanLiteral b)))
     | U.StringLiteral s -> CheckerState.return (T.Atom (Literal (StringLiteral s)))
+
+  and checkFramesAndGetPrincipalFrame ~funcFrame ~zippedArgs =
+    let eqShapeElement =
+      Typed.Index.(
+        function
+        | ShapeRef a, ShapeRef b -> Identifier.equal a b
+        | Add a, Add b -> a.const = b.const && Map.equal ( = ) a.refs b.refs
+        | ShapeRef _, Add _ | Add _, ShapeRef _ -> false)
+    in
+    let%bind frames =
+      zippedArgs
+      |> List.map ~f:(fun (param, (_, argType, argSource)) ->
+        (* Check the element type is correct *)
+        let checkElementType =
+          requireType
+            ~expected:(Typed.Type.Atom param.element)
+            ~actual:(Typed.Type.Atom argType.element)
+            ~makeError:(fun ea ->
+              { source = argSource; elem = ArgumentTypeDisagreement ea })
+        in
+        (* Check that the cell shape is correct and get the frame *)
+        let checkCellAndGetFrame =
+          let frame, argCell =
+            List.split_n
+              argType.shape
+              (List.length argType.shape - List.length param.shape)
+          in
+          let cellDisagreementErr =
+            { source = argSource
+            ; elem =
+                CellShapeDisagreement { expected = param.shape; actual = argType.shape }
+            }
+          in
+          let%bind zippedCellElements =
+            zipLists ~expected:param.shape ~actual:argCell ~makeError:(fun _ ->
+              cellDisagreementErr)
+          in
+          let allShapeElementsAgree =
+            List.for_all zippedCellElements ~f:eqShapeElement
+          in
+          let%map () = CheckerState.require allShapeElementsAgree cellDisagreementErr in
+          frame
+        in
+        let%map () = checkElementType
+        and frame = checkCellAndGetFrame in
+        { elem = frame; source = argSource })
+      |> CheckerState.all
+    in
+    let getPrincipalFrame
+      (headFrame :: restFrames : ('s, Typed.Index.shape) Source.annotate NeList.t)
+      =
+      (* Get the principal frame *)
+      let principalFrame, _ =
+        List.fold
+          restFrames
+          ~init:(headFrame.elem, List.length headFrame.elem)
+          ~f:(fun (maxFrame, maxSize) { elem = curr; source = _ } ->
+            let currSize = List.length curr in
+            if currSize > maxSize then curr, currSize else maxFrame, maxSize)
+      in
+      (* Check that each frame conforms to the principal frame *)
+      let%map () =
+        headFrame :: restFrames
+        |> List.map ~f:(fun { elem = frame; source = frameSource } ->
+          let rec zipAndDropRemainder a b =
+            match a, b with
+            | a :: aRest, b :: bRest -> (a, b) :: zipAndDropRemainder aRest bRest
+            | _, [] | [], _ -> []
+          in
+          let zippedShapeElements = zipAndDropRemainder principalFrame frame in
+          let allShapeElementsAgree =
+            List.for_all zippedShapeElements ~f:eqShapeElement
+          in
+          CheckerState.require
+            allShapeElementsAgree
+            { source = frameSource
+            ; elem =
+                PrincipalFrameDisagreement { expected = principalFrame; actual = frame }
+            })
+        |> CheckerState.all_unit
+      in
+      principalFrame
+    in
+    getPrincipalFrame (funcFrame :: frames)
 
   and extractTupleArrayType
     (env : Environment.t)

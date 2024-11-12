@@ -243,13 +243,13 @@ let assertValueRestriction value =
       | Primitive _ -> true
       | Map _ -> false
       | ContiguousSubArray _ -> false
+      | TupleExpr {components; type' = _ } -> List.for_all ~f:isValueArray components
       | TupleDeref tupleDeref -> isValueArray tupleDeref.expr
     and isValueAtom = function
       | TermLambda _ -> true
       | TypeLambda _ -> true
       | IndexLambda _ -> true
       | Box box -> isValueArray box.body
-      | TupleExpr { elements; type' = _ } -> List.for_all ~f:isValueAtom elements
       | Literal
           ( IntLiteral _
           | FloatLiteral _
@@ -338,6 +338,11 @@ let rec genNewBindingsArray env (expr : Explicit.Expr.array) =
     return
     @@ Expr.ContiguousSubArray
          { arrayArg; indexArg; originalShape; resultShape; cellShape; l; type' }
+  | TupleExpr { components; type' } ->
+    let%bind components =
+      components |> List.map ~f:(genNewBindingsArray env) |> InlineState.all
+    in
+    return @@ Expr.TupleExpr { components; type' }
   | TupleDeref { expr; position; type' } ->
     let%bind expr = genNewBindingsArray env expr in
     return @@ Expr.TupleDeref { expr; position; type' }
@@ -358,11 +363,6 @@ and genNewBindingsAtom env (expr : Explicit.Expr.atom) =
   | Box { indices; bodyType; body; type' } ->
     let%bind body = genNewBindingsArray env body in
     return @@ Expr.Box { indices; bodyType; body; type' }
-  | TupleExpr { elements; type' } ->
-    let%bind elements =
-      elements |> List.map ~f:(genNewBindingsAtom env) |> InlineState.all
-    in
-    return @@ Expr.TupleExpr { elements; type' }
   | Literal
       ( IntLiteral _
       | FloatLiteral _
@@ -546,6 +546,21 @@ let rec inlineArray indexEnv (appStack : appStack) (array : Explicit.Expr.array)
            ; type' = inlineArrayTypeWithStack [] type'
            })
     , functions )
+  | TupleExpr { components; type' = _ } ->
+    let%bind components, functions =
+      List.map ~f:(inlineArray indexEnv appStack) components
+      |> InlineState.all
+      |> InlineState.unzip
+    in
+    let functions = FunctionSet.merge functions in
+    let components, type' =
+      components
+      |> List.map ~f:(fun elt ->
+        let type' = (I.arrayType elt).element in
+        Nucleus.Expr.ArrayAsAtom { array = elt; type' }, type')
+      |> List.unzip
+    in
+    return (scalar (I.Values { elements = components; type' }), functions)
   | TupleDeref { expr; position; type' } ->
     let arrayType = E.arrayType expr in
     let atomArrayType =
@@ -640,6 +655,8 @@ and inlineAtom indexEnv (appStack : appStack) (atom : Explicit.Expr.atom)
           Set.diff variablesUsed variablesDeclared
         | E.ReifyIndex { index; type' = _ } -> indexCaptures index
         | E.Primitive { name = _; type' = _ } -> Set.empty (module Identifier)
+        | E.TupleExpr { components; type' = _ } ->
+          Set.union_list (module Identifier) (List.map ~f:arrayCaptures components)
         | E.TupleDeref { expr; position = _; type' = _ } -> arrayCaptures expr
         | E.ContiguousSubArray
             { arrayArg; indexArg; originalShape; resultShape; cellShape; l; type' = _ } ->
@@ -680,8 +697,6 @@ and inlineAtom indexEnv (appStack : appStack) (atom : Explicit.Expr.atom)
           let indexCaptures = List.map indices ~f:indexCaptures
           and bodyCaptures = arrayCaptures body in
           Set.union_list (module Identifier) (bodyCaptures :: indexCaptures)
-        | E.TupleExpr { elements; type' = _ } ->
-          Set.union_list (module Identifier) (List.map ~f:atomCaptures elements)
         | E.Literal
             ( IntLiteral _
             | FloatLiteral _
@@ -747,21 +762,6 @@ and inlineAtom indexEnv (appStack : appStack) (atom : Explicit.Expr.atom)
            ; type' = inlineSigmaTypeWithStack appStack type'
            })
     , functions )
-  | TupleExpr { elements; type' = _ } ->
-    let%bind elements, functions =
-      List.map ~f:(inlineAtom indexEnv appStack) elements
-      |> InlineState.all
-      |> InlineState.unzip
-    in
-    let functions = FunctionSet.merge functions in
-    let elements, type' =
-      elements
-      |> List.map ~f:(fun elt ->
-        let type' = (I.arrayType elt).element in
-        Nucleus.Expr.ArrayAsAtom { array = elt; type' }, type')
-      |> List.unzip
-    in
-    return (scalar (I.Values { elements; type' }), functions)
   | Literal (CharacterLiteral c) ->
     return (scalar (I.Literal (CharacterLiteral c)), FunctionSet.Empty)
   | Literal (IntLiteral i) -> return (scalar (I.Literal (IntLiteral i)), FunctionSet.Empty)

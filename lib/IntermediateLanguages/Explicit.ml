@@ -105,8 +105,8 @@ module Expr = struct
   and literal = Typed.Expr.literal
 
   and tupleExpr =
-    { elements : atom list
-    ; type' : Type.tuple
+    { components : array list
+    ; type' : Type.array
     }
 
   and tupleDeref =
@@ -145,6 +145,7 @@ module Expr = struct
     | Primitive of primitive
     | ContiguousSubArray of contiguousSubArray
     | Map of map
+    | TupleExpr of tupleExpr
     | TupleDeref of tupleDeref
 
   and atom =
@@ -153,7 +154,6 @@ module Expr = struct
     | IndexLambda of indexLambda
     | Box of box
     | Literal of literal
-    | TupleExpr of tupleExpr
 
   and t =
     | Array of array
@@ -165,7 +165,6 @@ module Expr = struct
     | TypeLambda typeLambda -> Forall typeLambda.type'
     | IndexLambda indexLambda -> Pi indexLambda.type'
     | Box box -> Sigma box.type'
-    | TupleExpr tuple -> Tuple tuple.type'
     | Literal (IntLiteral _) -> Literal (IntLiteral Int32)
     | Literal (FloatLiteral _) -> Literal FloatLiteral
     | Literal (CharacterLiteral _) -> Literal CharacterLiteral
@@ -185,6 +184,7 @@ module Expr = struct
     | ReifyIndex reifyIndex -> Arr reifyIndex.type'
     | Primitive primitive -> primitive.type'
     | ContiguousSubArray contiguousSubArray -> contiguousSubArray.type'
+    | TupleExpr tuple -> tuple.type'
     | TupleDeref tupleDeref -> tupleDeref.type'
     | Map map -> map.type'
   ;;
@@ -272,6 +272,11 @@ module Substitute = struct
           ; l
           ; type' = Type.subTypesIntoArray types type'
           }
+      | TupleExpr { components; type' } ->
+        TupleExpr
+          { components = List.map ~f:(subTypesIntoArray types) components
+          ; type' = Type.subTypesIntoArray types type'
+          }
       | TupleDeref { expr; position; type' } ->
         TupleDeref
           { expr = subTypesIntoArray types expr
@@ -302,11 +307,6 @@ module Substitute = struct
           ; body = subTypesIntoArray types body
           ; bodyType = Type.subTypesIntoArray types bodyType
           ; type' = Type.subTypesIntoSigma types type'
-          }
-      | TupleExpr { elements; type' } ->
-        TupleExpr
-          { elements = List.map ~f:(subTypesIntoAtom types) elements
-          ; type' = List.map ~f:(Type.subTypesIntoAtom types) type'
           }
       | Literal _ as literal -> literal
 
@@ -399,6 +399,11 @@ module Substitute = struct
           ; frameShape = Index.subIndicesIntoShape indices frameShape
           ; type' = Type.subIndicesIntoArray indices type'
           }
+      | TupleExpr { components; type' } ->
+        TupleExpr
+          { components = List.map ~f:(subIndicesIntoArray indices) components
+          ; type' = Type.subIndicesIntoArray indices type'
+          }
       | TupleDeref { expr; position; type' } ->
         TupleDeref
           { expr = subIndicesIntoArray indices expr
@@ -429,11 +434,6 @@ module Substitute = struct
           ; body = subIndicesIntoArray indices body
           ; bodyType = Type.subIndicesIntoArray indices bodyType
           ; type' = Type.subIndicesIntoSigma indices type'
-          }
-      | TupleExpr { elements; type' } ->
-        TupleExpr
-          { elements = List.map ~f:(subIndicesIntoAtom indices) elements
-          ; type' = List.map ~f:(Type.subIndicesIntoAtom indices) type'
           }
       | Literal _ as literal -> literal
 
@@ -503,6 +503,8 @@ module Substitute = struct
           ; frameShape
           ; type'
           }
+      | TupleExpr { components; type' } ->
+        TupleExpr { components = List.map ~f:(subRefsIntoArray refs) components; type' }
       | TupleDeref { expr; position; type' } ->
         TupleDeref { expr = subRefsIntoArray refs expr; position; type' }
 
@@ -517,8 +519,6 @@ module Substitute = struct
         IndexLambda { params; body = subRefsIntoArray refs body; type' }
       | Box { indices; body; bodyType; type' } ->
         Box { indices; body = subRefsIntoArray refs body; bodyType; type' }
-      | TupleExpr { elements; type' } ->
-        TupleExpr { elements = List.map ~f:(subRefsIntoAtom refs) elements; type' }
       | Literal _ as literal -> literal
 
     and subRefsIntoRef refs { id; type' } =
