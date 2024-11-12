@@ -663,12 +663,12 @@ module TypeCheck = struct
     | Reshape _ -> ok ()
     | ReifyDimension _ -> ok ()
     | ReifyShape _ -> ok ()
-    | TupleExpr elements ->
+    | ValuesExpr elements ->
       elements.elem
       |> List.map ~f:requireValue
       |> CheckerState.all
       |> CheckerState.ignore_m
-    | TupleDeref { tuple; position = _ } -> requireValue tuple
+    | ValuesDeref { expr; position = _ } -> requireValue expr
     | IntLiteral _ -> ok ()
     | FloatLiteral _ -> ok ()
     | CharacterLiteral _ -> ok ()
@@ -1456,7 +1456,7 @@ module TypeCheck = struct
            ; body = bodyTyped
            ; type' = T.arrayType bodyTyped
            })
-    | U.TupleExpr components ->
+    | U.ValuesExpr components ->
       let compsSource = components.source in
       let%bind comps =
       components.elem
@@ -1485,17 +1485,17 @@ module TypeCheck = struct
         ~zippedArgs 
       in
       T.Array
-        (T.TupleExpr
+        (T.ValuesExpr
           { components = List.map comps ~f:(fun (comp, _, _) -> comp)
           ; type' = Typed.Type.Arr
               { element = (Typed.Type.Tuple compAtoms)
               ; shape = principalFrame }
           })
-    | U.TupleDeref { tuple; position } ->
+    | U.ValuesDeref { expr; position } ->
       (* type check tuple *)
       (* if atom -> grab the nth type *)
       (* if array -> find the 'frame', check that atom is tuple and grab its nth type *)
-      let%bind typedTuple = check env tuple in
+      let%bind typedTuple = check env expr in
       let typedTuple =
         match typedTuple with
         | T.Atom a ->
@@ -1503,8 +1503,8 @@ module TypeCheck = struct
             { element = a; type' = { element = Typed.Expr.atomType a; shape = [] } }
         | T.Array a -> a
       in
-      let%bind type' = extractTupleArray env typedTuple position tuple.source in
-      CompilerState.return (T.Array (T.TupleDeref { expr = typedTuple; position; type' }))
+      let%bind type' = extractTupleArray env typedTuple position expr.source in
+      CompilerState.return (T.Array (T.ValuesDeref { expr = typedTuple; position; type' }))
     | U.IntLiteral i -> CheckerState.return (T.Atom (Literal (IntLiteral i)))
     | U.FloatLiteral f -> CheckerState.return (T.Atom (Literal (FloatLiteral f)))
     | U.CharacterLiteral c -> CheckerState.return (T.Atom (Literal (CharacterLiteral c)))

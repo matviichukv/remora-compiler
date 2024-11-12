@@ -152,9 +152,9 @@ expr:
       makeAnn (Expr.Unbox { valueBinding; indexBindings; box; body }) $loc
     }
   | LEFT_PAREN; VALUES; elements = ann_list(expr); RIGHT_PAREN
-    { makeAnn (Expr.TupleExpr elements) $loc }
-  | LEFT_PAREN; position = TUPLE_DEREF; tuple = expr; RIGHT_PAREN
-    { makeAnn (Expr.TupleDeref { tuple; position }) $loc }
+    { makeAnn (Expr.ValuesExpr elements) $loc }
+  | LEFT_PAREN; position = TUPLE_DEREF; e = expr; RIGHT_PAREN
+    { makeAnn (Expr.ValuesDeref { expr = e; position }) $loc }
   | e = expr; LEFT_CURLY; typeArgs = list(tpe); RIGHT_CURLY;
               LEFT_CURLY; indexArgs = list(index); RIGHT_CURLY
   | e = expr; LEFT_CURLY; typeArgs = list(tpe); BAR

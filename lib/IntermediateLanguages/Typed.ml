@@ -291,7 +291,12 @@ module Expr = struct
     ; type' : Type.array [@sexp_drop_if fun _ -> true]
     }
 
-  and tupleDeref =
+  and valuesExpr = 
+    { components : array list
+    ; type' : Type.array       (*atom type: tuple*)
+    }
+
+  and valuesDeref =
     { expr : array
     ; position : int
     ; type' : Type.array
@@ -317,13 +322,8 @@ module Expr = struct
     | Primitive of primitive
     | Lift of lift
     | ContiguousSubArray of contiguousSubArray
-    | TupleExpr of tuple
-    | TupleDeref of tupleDeref
-
-  and tuple =
-    { components : array list     (*Consider renaming to values? to avoid confusion with array atoms*)
-    ; type' : Type.array        
-    }
+    | ValuesExpr of valuesExpr
+    | ValuesDeref of valuesDeref
 
   and atom =
     | TermLambda of termLambda
@@ -363,8 +363,8 @@ module Expr = struct
     | Primitive primitive -> primitive.type'
     | Lift lift -> lift.type'
     | ContiguousSubArray contiguousSubArray -> contiguousSubArray.type'
-    | TupleExpr tuple -> tuple.type'
-    | TupleDeref tupleDeref -> tupleDeref.type'
+    | ValuesExpr valuesExpr -> valuesExpr.type'
+    | ValuesDeref valuesDeref -> valuesDeref.type'
   ;;
 
   let type' : t -> Type.t = function
@@ -802,10 +802,10 @@ module Substitute = struct
           ; l
           ; type' = Type.subTypesIntoArray types type'
           }
-      | TupleExpr { components; type' } ->
-        TupleExpr { components = List.map ~f:(subTypesIntoArray types) components; type' }
-      | TupleDeref { expr; position; type' } ->
-        TupleDeref
+      | ValuesExpr { components; type' } ->
+        ValuesExpr { components = List.map ~f:(subTypesIntoArray types) components; type' }
+      | ValuesDeref { expr; position; type' } ->
+        ValuesDeref
           { expr = subTypesIntoArray types expr
           ; position
           ; type' = Type.subTypesIntoArray types type'
@@ -918,13 +918,13 @@ module Substitute = struct
           ; l = Index.subIndicesIntoDim indices l
           ; type' = Type.subIndicesIntoArray indices type'
           }
-      | TupleExpr { components; type' } ->
-        TupleExpr 
+      | ValuesExpr { components; type' } ->
+        ValuesExpr 
           { components = List.map ~f:(subIndicesIntoArray indices) components
           ; type' = Type.subIndicesIntoArray indices type'
           }
-      | TupleDeref { expr; position; type' } ->
-        TupleDeref
+      | ValuesDeref { expr; position; type' } ->
+        ValuesDeref
           { expr = subIndicesIntoArray indices expr
           ; position
           ; type' = Type.subIndicesIntoArray indices type'

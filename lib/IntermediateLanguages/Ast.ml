@@ -153,10 +153,10 @@ module Expr = struct
 
   and 's reifyShape = 's Index.t
   and 's reifyDimension = 's Index.t
-  and 's tupleExpr = ('s, 's t list) Source.annotate
+  and 's valuesExpr = ('s, 's t list) Source.annotate
 
-  and 's tupleDeref =
-    { tuple : 's t
+  and 's valuesDeref =
+    { expr : 's t
     ; position : int
     }
 
@@ -179,8 +179,8 @@ module Expr = struct
     | Reshape of 's reshape
     | ReifyShape of 's reifyShape
     | ReifyDimension of 's reifyDimension
-    | TupleExpr of 's tupleExpr
-    | TupleDeref of 's tupleDeref
+    | ValuesExpr of 's valuesExpr
+    | ValuesDeref of 's valuesDeref
     | IntLiteral of int
     | FloatLiteral of float
     | CharacterLiteral of char

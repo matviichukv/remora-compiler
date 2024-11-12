@@ -243,8 +243,8 @@ let assertValueRestriction value =
       | Primitive _ -> true
       | Map _ -> false
       | ContiguousSubArray _ -> false
-      | TupleExpr {components; type' = _ } -> List.for_all ~f:isValueArray components
-      | TupleDeref tupleDeref -> isValueArray tupleDeref.expr
+      | ValuesExpr {components; type' = _ } -> List.for_all ~f:isValueArray components
+      | ValuesDeref tupleDeref -> isValueArray tupleDeref.expr
     and isValueAtom = function
       | TermLambda _ -> true
       | TypeLambda _ -> true
@@ -338,14 +338,14 @@ let rec genNewBindingsArray env (expr : Explicit.Expr.array) =
     return
     @@ Expr.ContiguousSubArray
          { arrayArg; indexArg; originalShape; resultShape; cellShape; l; type' }
-  | TupleExpr { components; type' } ->
+  | ValuesExpr { components; type' } ->
     let%bind components =
       components |> List.map ~f:(genNewBindingsArray env) |> InlineState.all
     in
-    return @@ Expr.TupleExpr { components; type' }
-  | TupleDeref { expr; position; type' } ->
+    return @@ Expr.ValuesExpr { components; type' }
+  | ValuesDeref { expr; position; type' } ->
     let%bind expr = genNewBindingsArray env expr in
-    return @@ Expr.TupleDeref { expr; position; type' }
+    return @@ Expr.ValuesDeref { expr; position; type' }
 
 and genNewBindingsAtom env (expr : Explicit.Expr.atom) =
   let open Explicit in
@@ -546,7 +546,7 @@ let rec inlineArray indexEnv (appStack : appStack) (array : Explicit.Expr.array)
            ; type' = inlineArrayTypeWithStack [] type'
            })
     , functions )
-  | TupleExpr { components; type' = _ } ->
+  | ValuesExpr { components; type' = _ } ->
     let%bind components, functions =
       List.map ~f:(inlineArray indexEnv appStack) components
       |> InlineState.all
@@ -561,7 +561,7 @@ let rec inlineArray indexEnv (appStack : appStack) (array : Explicit.Expr.array)
       |> List.unzip
     in
     return (scalar (I.Values { elements = components; type' }), functions)
-  | TupleDeref { expr; position; type' } ->
+  | ValuesDeref { expr; position; type' } ->
     let arrayType = E.arrayType expr in
     let atomArrayType =
       match arrayType with
@@ -655,9 +655,9 @@ and inlineAtom indexEnv (appStack : appStack) (atom : Explicit.Expr.atom)
           Set.diff variablesUsed variablesDeclared
         | E.ReifyIndex { index; type' = _ } -> indexCaptures index
         | E.Primitive { name = _; type' = _ } -> Set.empty (module Identifier)
-        | E.TupleExpr { components; type' = _ } ->
+        | E.ValuesExpr { components; type' = _ } ->
           Set.union_list (module Identifier) (List.map ~f:arrayCaptures components)
-        | E.TupleDeref { expr; position = _; type' = _ } -> arrayCaptures expr
+        | E.ValuesDeref { expr; position = _; type' = _ } -> arrayCaptures expr
         | E.ContiguousSubArray
             { arrayArg; indexArg; originalShape; resultShape; cellShape; l; type' = _ } ->
           let arrayArgCaptures = arrayCaptures arrayArg
