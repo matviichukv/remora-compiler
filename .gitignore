@@ -33,4 +33,5 @@ _opam/
 
 test.remora
 remora.code-workspace
-examples/
+examples/*.scm
+examples/test_out

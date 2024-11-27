@@ -1,0 +1,193 @@
+;;; [float 2] is a complex number
+
+(define pi 3.14159265358979323846)
+(define pi-c [pi 0.0])
+(define i [0.0 1.0])
+;;; Get real and imaginary parts of a complex number
+(define (get-real [c [float 2]]) : [float]
+  (index{float | [2] [] 1} c [0]))
+
+(define (get-im [c [float 2]]) : [float]
+  (index{float | [2] [] 1} c [1]))
+
+(define (c+ [a [float 2]]
+            [b [float 2]]) : [float 2]
+  (let* ([real-part (+. (get-real a)
+                        (get-real b))]
+         [im-part (+. (get-im a)
+                      (get-im b))])
+    [real-part im-part]))
+
+(define (c* [x [float 2]]
+            [y [float 2]]) : [float 2]
+  ;; (a + bi) * (c + di) = (ac - bd) + (ad + bc)i
+  (let* ([a (get-real x)]
+         [b (get-im x)]
+         [c (get-real y)]
+         [d (get-im y)]
+         [real-part (-. (*. a c) (*. b d))]
+         [im-part (+. (*. a d) (*. b c))])
+    [real-part im-part]))
+
+(define (cexp [a [float 2]]) : [float 2]
+  (let* ([x : [float] (get-real a)]
+         [y : [float] (get-im a)]
+         [r : [float] (exp x)])
+    [(*. r (cos y)) (*. r (sin y))]))
+
+;; (define x [3.0 2.0])
+;; (define y [4.0 -1.0])
+
+;; (define res (c* x y))
+;; res
+
+;; almost -1 + 0 * i
+;; (cexp (c* pi-c i))
+
+(define (indices-of/2{| d1 d2}): [int d1 d2 2]
+  (let [d1-val (reify-dimension d2)]
+    ((fn ([id [int]]) [(/ id d1-val) (% id d1-val)]) iota{| [d1 d2]})))
+
+(define (transpose/2{t | in1 in2 @cell}
+          [arr [t in1 in2 @cell]]) : [t in2 in1 @cell]
+  (define idxs (indices-of/2{| in2 in1}))
+  (define transposed-idxs (scatter{int | 2 2 []} idxs [1 0]))
+  (index{t | [in1 in2] @cell 2} arr transposed-idxs))
+
+(define (root-of-unity [nth [float]]) : [float 2]
+  (define c_-2 [-2.0 0.0])
+  (define pi_-2 (c* c_-2 pi-c))
+  (define i_pi_-2 (c* pi_-2 i))
+  (define nth-c [(/. 1.0 nth) 0.0])
+  (define complete-exp (c* i_pi_-2 nth-c))
+  (cexp complete-exp))
+
+;; input is 2 complex numbers
+;; output is 2 complex numbers that have been 'butterflied'
+(define (butterfly [input [float 2 2]] [mult [float 2]]) : [float 2 2]
+  (define u (index {float} {[2] [2] 1} input [0]))
+  (define t (c* mult (index {float} {[2] [2] 1} input [1])))
+  (define u-p (c+ u t))
+  (define t-p (c+ u (c* [-1.0 0.0] t)))
+  [u-p t-p])
+;; n has to be a power of 2, n = 2^t
+(define (fft {}
+             { n/2 t-1 }
+             [x [float (+ n/2 n/2) 2]]) : [float (+ n/2 n/2) 2]
+  (define start-x (reshape [n/2 2 2] x))
+  (define iterations (+ 1 (reify-dimension t-1)))
+  (define unordered-res
+    (fold {int [float n/2 2 2]} {(+ t-1 1) []}
+      (fn ([acc [float n/2 2 2]] [s [int]])
+         (define m (expt 2.0 (int->float s)))
+         (define m_int (float->int m))
+         (define nth-unity (root-of-unity m))
+         (define all-unity-roots (scan-init {float} { n/2 [] [2] }
+                                            c* [1.0 0.0]
+                                            (replicate {float} {[n/2] [2]} nth-unity)))
+         (define unity-root-idxs (reshape [n/2 1] (% iota{|[n/2]} (/ m_int 2))))
+         ;; (define unity-root-idxs iota{|[n/2 1]})
+         (define unity-roots (index {float} { [(+ 1 n/2)] [2] 1}
+                                    all-unity-roots unity-root-idxs))
+         (reshape [n/2 2 2] (transpose/2 {float} {n/2 2 [2]} (butterfly acc unity-roots))))
+         ;; (reshape [n/2 2 2] (transpose/2 {float} {n/2 2 [2]} (butterfly acc [1.0 0.0]))))
+      start-x
+      (+ 1 iota{| [(+ t-1 1)]})))
+  ;; reorder back
+  (define ordered-res
+    (fold {int [float n/2 2 2]} {t-1 []}
+      (fn ([acc [float n/2 2 2]] [s [int]])
+        (transpose/2 {float} {2 n/2 [2]} (reshape [2 n/2 2] acc)))
+      unordered-res
+      iota{| [t-1]}))
+  (reshape [(+ n/2 n/2) 2] ordered-res))
+  ;; (reshape [(+ n/2 n/2) 2] unordered-res))
+
+;; (define test-fft-data-1 [[1.0 2.0] [2.0 3.0]])
+;; ;; Expected results
+;; ;; 3.0, 5.0
+;; ;; -1.0 -1.0
+;; (fft {} { 1 1 } test-fft-data-1)
+
+;; (define test-fft-data-2 [[1.0 2.0]
+;;                          [2.0 3.0]
+;;                          [3.0 1.0]
+;;                          [4.0 0.0]
+;;                          [5.0 5.0]
+;;                          [6.0 4.0]
+;;                          [7.0 5.0]
+;;                          [8.0 1.0]])
+;; ;; Expected results
+;; ;; 36.000000,21.000000
+;; ;; -9.414214,6.656854
+;; ;; 2.000000,5.000000
+;; ;; -1.414214,-1.343146
+;; ;; -4.000000,5.000000
+;; ;; -6.585786,-4.656854
+;; ;; -10.000000,-3.000000
+;; ;; 1.414214,-12.656854
+;; (fft {} { 4 3 } test-fft-data-2)
+
+(define test-fft-data-3 [[1.0 2.0] [2.0 3.0] [4.0 1.0] [2.0 2.0]])
+;; Expected results
+;; 9.000000,8.000000
+;; -2.000000,1.000000
+;; 1.000000,-2.000000
+;; -4.000000,1.000000
+(fft {} { 2 1 } test-fft-data-3)
+;; Bit-reversed data-3
+;; (define test-fft-data-3 [[1.0 2.0] [4.0 1.0] [2.0 3.0] [2.0 2.0]])
+;; ;; Expected results
+;; ;; 9.000000,8.000000
+;; ;; -2.000000,1.000000
+;; ;; 1.000000,-2.000000
+;; ;; -4.000000,1.000000
+;; (fft {} { 2 2 1 } test-fft-data-3)
+;; (define nth-unity (root-of-unity 4.0))
+;; (define all-unity-roots (scan-init {float} { 8 [] [2] }
+;;                                    c* [1.0 0.0]
+;;                                    (replicate {float} {[8] [2]} nth-unity)))
+;; all-unity-roots
+
+;; (define test-fft-data-3 [[0.0 0.0] [1.0 0.0] [2.0 0.0] [3.0 0.0]])
+;; ;; Expected results
+;; ;; 9.000000,8.000000
+;; ;; -2.000000,1.000000
+;; ;; 1.000000,-2.000000
+;; ;; -4.000000,1.000000
+;; (fft {} { 2 2 } test-fft-data-3)
+
+;; (define nth-unity (root-of-unity 10.0))
+;; [nth-unity
+;;  (c* nth-unity nth-unity)
+;;  (c* nth-unity (c* nth-unity nth-unity))
+;;  (c* nth-unity (c* nth-unity (c* nth-unity nth-unity)))]
+;; (define all-unity-roots (scan-init {float} { 10 [] [2] }
+;;                                    c* [1.0 0.0]
+;;                                    (replicate {float} {[10] [2]} nth-unity)))
+;; all-unity-roots
+;; (reduce-init {float} {5 [] [2]} c* [1.0 0.0] (replicate {float} {[5] [2]} nth-unity))
+;; (define test-complex [[1.0 1.0] [2.0 0.9] [3.0 0.8] [4.0 2.0] [5.0 1.5]])
+;; (define test-complex [[1.0 1.0] [2.0 0.9]])
+;; (reduce-init {float} {2 [] [2]} c* [1.0 0.0] test-complex)
+;; (c* [1.0 0.0] (c* (c* [1.0 1.0] [1.0 0.0]) (c* [2.0 0.9] [1.0 0.0])))
+
+;; (define all-unity-roots (trace {float float} {10000 [2] [2]}
+;;                               c* [1.0 0.0]
+;;                               (replicate {float} {[10000] [2]} nth-unity)))
+;; [all-unity-roots
+;;  [[1.0 0.0]
+;;   (c* nth-unity [1.0 0.0])
+;;   (c* nth-unity (c* nth-unity [1.0 0.0]))]]
+;; (c* (c* nth-unity nth-unity) (c* nth-unity (c* [1.0 0.0] nth-unity)))
+;; (c* (c* (c* (c* nth-unity nth-unity) nth-unity) nth-unity) nth-unity)
+;; (c* nth-unity (c* nth-unity (c* nth-unity (c* nth-unity nth-unity))))
+;; (index {float} {[10] [2] 1} all-unity-roots [[0] [1] [2] [3]])
+;; (define foo iota{| [10]})
+;; (define (reshape-transpose{} {} [arr [int 5 2]])
+;;   (reshape [5 2] (transpose/2 {int} {5 2} arr)))
+;; (define bar (reshape-transpose (reshape-transpose (reshape-transpose (reshape [5 2] foo)))))
+;; (define (anti-r-t{} {} [arr [int 5 2]])
+;;   (transpose/2 {int} {2 5} (reshape [2 5] arr)))
+;; (anti-r-t (anti-r-t (anti-r-t bar)))
+;; (scan-init {int} {10 [] []} + 0 (+ 1 iota{|[10]}))
