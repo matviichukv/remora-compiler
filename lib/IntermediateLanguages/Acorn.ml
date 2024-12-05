@@ -564,11 +564,18 @@ module Expr = struct
     ; type' : Type.t
     }
 
+  and staticArrayInitVals =
+    { elements : literal list
+    ; type' : Type.t
+    }
+
   and (_, _) t =
     | Ref : ref -> (_, _) t
     | BoxValue : ('l, 'c) boxValue -> ('l, 'c) t
     | IndexLet : ('l, 'c) indexLet -> ('l, 'c) t
     | MallocLet : ('l, 'c) t mallocLet -> ('l, 'c) t
+    | StaticAllocLet : ('l, ('l, 'c) t, 'c) let' -> ('l, 'c) t
+    | StaticArrayInit : staticArrayInitVals -> (_, _) t
     | ReifyDimensionIndex : reifyDimensionIndex -> (_, _) t
     | ShapeProd : Index.shape -> (_, _) t
     | LoopBlock : ('l, 'l, 'p, 'c, 'e) loopBlock -> ('l, 'c) t
@@ -620,6 +627,8 @@ module Expr = struct
     | BoxValue boxValue -> boxValue.type'
     | IndexLet indexLet -> indexLet.type'
     | Let let' -> type' let'.body
+    | StaticAllocLet staticAllocLet -> type' staticAllocLet.body
+    | StaticArrayInit staticArrayInitVals -> staticArrayInitVals.type'
     | MallocLet mallocLet -> type' mallocLet.body
     | ReifyDimensionIndex _ -> Atom (Literal (IntLiteral Int32))
     | ShapeProd _ -> Atom (Literal (IntLiteral Int32))
@@ -815,6 +824,17 @@ module Expr = struct
         ; Sexp.List (List.map memArgs ~f:sexp_of_memMallocArg)
         ; sexp_of_s body
         ]
+
+    and sexp_of_staticAllocLet
+      : type a s c.
+        (a -> Sexp.t) -> (s -> Sexp.t) -> (c -> Sexp.t) -> (a, s, c) let' -> Sexp.t
+      =
+      fun sexp_of_a sexp_of_s sexp_of_c { args; body } ->
+        Sexp.List
+          [ Sexp.Atom "static-alloc-let"
+          ; Sexp.List (List.map args ~f:(sexp_of_letArg sexp_of_a sexp_of_c))
+          ; sexp_of_s body
+          ]
 
     and sexp_of_tupleMatch = [%sexp_of: Nested.Expr.tupleMatch]
 
@@ -1213,6 +1233,10 @@ module Expr = struct
       | Eseq eseq -> sexp_of_eseq sexp_of_a sexp_of_c eseq
       | Getmem getmem -> sexp_of_getmem getmem
       | MallocLet memLet -> sexp_of_mallocLet (sexp_of_t sexp_of_a sexp_of_c) memLet
+      | StaticAllocLet memLet -> 
+        sexp_of_staticAllocLet sexp_of_a (sexp_of_t sexp_of_a sexp_of_c) sexp_of_c memLet
+      | StaticArrayInit { elements; type' = _ } ->
+        Sexp.List (Sexp.Atom "static-arr-init-vals" :: List.map elements ~f:sexp_of_literal)
 
     and sexp_of_statement
       : type a c. (a -> Sexp.t) -> (c -> Sexp.t) -> (a, c) statement -> Sexp.t

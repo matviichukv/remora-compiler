@@ -63,8 +63,10 @@ module Captures = struct
   let rec getExprLetBindings : type l. (l, 'a) Expr.t -> Identifier.t list =
     fun expr ->
     match expr with
+    | StaticAllocLet { args; body }
     | Let { args; body } ->
       List.map args ~f:(fun { binding; value = _ } -> binding) @ getExprLetBindings body
+    | StaticArrayInit _ -> []
     | Ref _ -> []
     | BoxValue { box; type' = _ } -> getExprLetBindings box
     | IndexLet { indexArgs = _; body; type' = _ } -> getExprLetBindings body
@@ -152,6 +154,7 @@ module Captures = struct
       in
       let bodyCaptures = getInExpr body - bindings in
       argCaptures + bodyCaptures
+    | StaticAllocLet { args; body } 
     | Let { args; body } ->
       let argCaptures = getList args ~f:(fun arg -> getInExpr arg.value) in
       let bindings =
@@ -295,6 +298,7 @@ module Captures = struct
     | ReifyDimensionIndex { dim } -> getInDim dim
     | ShapeProd shape -> getInShape shape
     | Literal _ -> empty
+    | StaticArrayInit _ -> empty
     | Getmem { addr; type' = _ } -> getInMem addr
 
   and getInStatement : type l. (l, unit) Acorn.Expr.statement -> t = function
@@ -338,6 +342,8 @@ let rec annotateExpr : type l. l Expr.sansCaptures -> l Expr.withCaptures = func
       ; type'
       }
   | MallocLet { memArgs; body } -> MallocLet { memArgs; body = annotateExpr body }
+  | StaticAllocLet { args; body }  -> 
+    StaticAllocLet { args = List.map args ~f:annotateArg; body = annotateExpr body }
   | Let { args; body } ->
     Let { args = List.map args ~f:annotateArg; body = annotateExpr body }
   | LoopBlock
@@ -621,7 +627,7 @@ let rec annotateExpr : type l. l Expr.sansCaptures -> l Expr.withCaptures = func
       }
   | Eseq { statement; expr; type' } ->
     Eseq { statement = annotateStatement statement; expr = annotateExpr expr; type' }
-  | (Ref _ | ReifyDimensionIndex _ | ShapeProd _ | Literal _ | Getmem _) as expr -> expr
+  | (Ref _ | ReifyDimensionIndex _ | ShapeProd _ | Literal _ | Getmem _ | StaticArrayInit _ ) as expr -> expr
 
 and annotateStatement
   : type l. l Expr.statementSansCaptures -> l Expr.statementWithCaptures

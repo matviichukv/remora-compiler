@@ -263,7 +263,8 @@ let constructDataFlowMap (expr : captures Acorn.t) =
         constructDataFlowMapLoopBlock loopBlock captureMap
       in
       loopBlockMap, loopBlockValue
-    | Let { args; body } ->
+      | StaticAllocLet { args; body }
+      | Let { args; body } ->
       let newMap =
         List.fold args ~init:map ~f:(fun acc { binding; value } ->
           let acc, value = constructDataFlowMap value acc in
@@ -274,6 +275,7 @@ let constructDataFlowMap (expr : captures Acorn.t) =
       (* While indices contain technically speaking arbitrary expressions, *)
       (* none of the expression that *will* end up there are interesting *)
     | Box { indices = _; body; type' = _ } -> constructDataFlowMap body map
+    | StaticArrayInit _ -> map, DFComputedValue
     | Literal _ -> map, DFComputedValue
     | Values { elements; type' = _ } ->
       let values, map =
@@ -491,6 +493,7 @@ let rec constructReplaceMap
     in
     Map.merge_skewed bodyMap consumerMap ~combine:(fun ~key:_ v _ -> v)
   | LoopKernel kernel -> constructReplaceMapLoopblockKernel kernel dfMap
+  | StaticAllocLet { args; body }
   | Let { args; body } ->
     let argMaps =
       List.map args ~f:(fun { binding = _; value } -> constructReplaceMap value dfMap)
@@ -498,6 +501,7 @@ let rec constructReplaceMap
     let bodyMap = constructReplaceMap body dfMap in
     List.fold argMaps ~init:bodyMap ~f:(Map.merge_skewed ~combine:(fun ~key:_ v _ -> v))
   | Box { indices = _; body; type' = _ } -> constructReplaceMap body dfMap
+  | StaticArrayInit _ -> emptyMap
   | Literal _ -> emptyMap
   | Values { elements; type' = _ } ->
     let elementMaps = List.map elements ~f:(fun e -> constructReplaceMap e dfMap) in
@@ -961,6 +965,13 @@ let rec removeHostToDevCopy
     let kernel = removeHostToDevCopyKernel kernel replaceMap exprToMemRefs in
     let captures = removeHostToDevCopyCaptures captures replaceMap exprToMemRefs in
     LoopKernel { kernel; captures; blocks; threads }
+  | StaticAllocLet { args; body } ->
+    let args =
+      List.map args ~f:(fun { binding; value } ->
+        { binding; value = removeHostToDevCopy value replaceMap exprToMemRefs })
+    in
+    let body = removeHostToDevCopy body replaceMap exprToMemRefs in
+    StaticAllocLet { args; body }
   | Let { args; body } ->
     let args =
       List.map args ~f:(fun { binding; value } ->
@@ -971,6 +982,7 @@ let rec removeHostToDevCopy
   | Box { indices; body; type' } ->
     let body = removeHostToDevCopy body replaceMap exprToMemRefs in
     Box { indices; body; type' }
+  | StaticArrayInit stArrInitVals -> StaticArrayInit stArrInitVals
   | Literal l -> Literal l
   | Values { elements; type' } ->
     let elements =
@@ -1269,11 +1281,13 @@ let rec findUses : type l. (l, captures) t -> (Identifier.t, _) Set.t = function
     let captureUses = findUsesCaptures captures in
     let loopBlockUses = findUsesLoopBlock loopBlock in
     Set.union captureUses loopBlockUses
+  | StaticAllocLet {args; body}
   | Let { args; body } ->
     let argsUses = List.map args ~f:(fun { binding = _; value } -> findUses value) in
     let bodyUses = findUses body in
     Set.union_list (module Identifier) (bodyUses :: argsUses)
   | Box { indices = _; body; type' = _ } -> findUses body
+  | StaticArrayInit _ -> Set.empty (module Identifier)
   | Literal _ -> Set.empty (module Identifier)
   | Values { elements; type' = _ } ->
     let uses = List.map elements ~f:findUses in
@@ -1541,6 +1555,7 @@ let rec removeReturnValue : type l. (l, captures) t -> (l, _) statement option =
     in
     let kernel = { mapResultMemDeviceInterim; loopBlock } in
     Some (ComputeForSideEffects (LoopKernel { kernel; captures; blocks; threads }))
+  | StaticAllocLet { args; body }
   | Let { args; body } ->
     let bodyUses = findUses body in
     let body = body |> removeReturnValue |> Option.value ~default:(Statements []) in
@@ -1564,6 +1579,7 @@ let rec removeReturnValue : type l. (l, captures) t -> (l, _) statement option =
     (match body with
      | None -> None
      | Some v -> Some v)
+  | StaticArrayInit _ -> None
   | Literal _ -> None
   | Values { elements; type' = _ } ->
     let elements =
@@ -1754,6 +1770,9 @@ let rec removeDevToHostCopy : type l. (l, _) t -> replaceMap:(_, _, _) Map.t -> 
       ; type'
       }
   | LoopKernel kernel -> LoopKernel kernel
+  | StaticAllocLet { args; body } ->
+    let body = removeDevToHostCopy body ~replaceMap in
+    StaticAllocLet { args; body }
   | Let { args; body } ->
     let bodyUses = findUses body in
     let rec generateNewExpr letBindersList =
@@ -1780,6 +1799,7 @@ let rec removeDevToHostCopy : type l. (l, _) t -> replaceMap:(_, _, _) Map.t -> 
   | Box { indices; body; type' } ->
     let body = removeDevToHostCopy body ~replaceMap in
     Box { indices; body; type' }
+  | StaticArrayInit stArrInitVals -> StaticArrayInit stArrInitVals  
   | Literal l -> Literal l
   | Values { elements; type' } ->
     let elements = List.map elements ~f:(removeDevToHostCopy ~replaceMap) in

@@ -420,6 +420,7 @@ let rec getPossibleMemSources
            (Map.find env id |> Option.value ~default:(Set.empty (module Identifier)))
            (Set.singleton (module Identifier) id)
     | Box { indices = _; body; type' = _ } -> getPossibleMemSources body
+    | StaticArrayInit _ -> return @@ Set.empty (module Identifier)
     | Literal
         ( IntLiteral _
         | FloatLiteral _
@@ -439,6 +440,7 @@ let rec getPossibleMemSources
       >>| Set.union_list (module Identifier)
     | BoxValue { box; type' = _ } -> getPossibleMemSources box
     | IndexLet { indexArgs = _; body; type' = _ } -> getPossibleMemSources body
+    | StaticAllocLet { args; body } 
     | Let { args; body } ->
       let%bind envExtensions =
         args
@@ -1263,30 +1265,127 @@ let rec allocRequest
     let argBindings =
       args |> List.map ~f:(fun arg -> arg.binding) |> Set.of_list (module Identifier)
     in
-    (* TODO: allocate everything from args in here locally so they are *)
-    (*       local to wherever the let lives (like declare a static    *)
-    (*       array inside the body kernel as a local array and not malloc *)
-    let args =
-      args
+    (* Helper, necessary to decide if and how to allocate statically *)
+    let computeSizeWhenShapeKnown (type' : Acorn.Type.t) =
+      match type' with
+      | Array {element = _; shape} -> 
+        shape 
+        |> NeList.map ~f:(fun shapeElement ->
+          match shapeElement with
+          | Index.Add { const; refs = _; lens = _ } -> const
+          | Index.ShapeRef _ -> raise Unreachable.default)
+        |> NeList.fold_left ~init:1 ~f:(fun acc a -> acc * a)
+      | _ -> raise Unreachable.default
+    in
+    (* We separate which args will be allocated statically, and which - dynamically *)
+    let staticArgs, dynamicArgs = 
+      List.partition_tf args ~f:(fun { binding = _; value } ->
+        match value with
+        | Frame { elements = _; dimension = _; type' } -> (
+          let type' = canonicalizeType type' in
+          match type' with
+          | Array {element = _; shape} -> 
+            let isShapeKnown = 
+              NeList.for_all shape ~f:(fun shapeElement ->
+                match shapeElement with
+                | Index.Add { const = _; refs; lens } -> Map.is_empty refs && Map.is_empty lens
+                | Index.ShapeRef _ -> false)
+            in
+            (* 1024 is a magic number; we don't want to store too much on the stack*)
+            isShapeKnown && (computeSizeWhenShapeKnown type') < 1024 
+          | _ -> false)
+        | _ -> false)
+    in
+    let staticAllocArgs = 
+      List.map staticArgs ~f:(fun { binding; value } ->
+        match value with
+        | Frame { elements; dimension = _; type'} -> (
+          let acornType = canonicalizeType type' in
+          (* Initialize static args if frame consists only of literals *)
+          let rec getLitListForArrInit (elements' : l Corn.Expr.t list) = 
+            List.fold_until elements' ~init:[]
+              ~f:(fun acc elem ->
+                match elem with 
+                | Literal l -> Continue (l :: acc)
+                | Frame { elements = els; dimension = _; type' = _} -> 
+                  (match (getLitListForArrInit els) with 
+                  (* Flatening the frame form, is valid because C is row-major *)
+                  | [] -> Stop []
+                  | acc' -> Continue (List.append acc' acc))
+                (* Returning empty list to signal that init vals contain not only literals *)
+                | _ -> Stop [])
+              ~finish:(fun acc -> acc)
+          in
+          let litListForArrInit = List.rev (getLitListForArrInit elements) in
+          Expr.{ 
+            binding
+          ; value = 
+            Expr.StaticArrayInit {
+              elements = litListForArrInit
+            ; type' = acornType }})
+        | _ -> raise @@ Unreachable.Error "expected frame expression")
+    in
+    let dynamicInitStaticLetArgs, staticInitStaticAllocArgs =
+      List.zip_exn staticArgs staticAllocArgs
+      |> List.partition_map 
+        ~f:(fun (letArg, staticAllocArg) -> 
+          match staticAllocArg.value with 
+          | StaticArrayInit {elements; type' = _} -> 
+            if List.is_empty elements
+            then First letArg
+            else Second staticAllocArg
+          | _ -> raise Unreachable.default)
+    in
+    let allocateFrames (argList : l Corn.Expr.letArg list) =
+      argList
       |> List.map ~f:(fun { binding; value } ->
         let%map value = allocExpr ~writeToAddr:None value in
         Expr.{ binding; value })
       |> all
     in
+    let mallocArgs = allocateFrames dynamicArgs in
+    let dynamicInitStaticArgs = allocateFrames dynamicInitStaticLetArgs in
+    (* let letArgs = allocateFrames args in *)
     let%bind body =
       avoidCaptures ~capturesToAvoid:argBindings @@ allocExpr ~writeToAddr:targetAddr body
     in
     let%map declaredLet =
       let open CompilerState in
       let open Let_syntax in
-      let%bind args, allocs = args in
-      let body = Acorn.Expr.Let { args; body } in
+      (* let%bind _, allocs = letArgs in *)
+      let%bind letArgs1, mallocArgAllocs = mallocArgs in
+      let%bind letArgs2, dynamicInitStaticAllocArgs = dynamicInitStaticArgs in    
+      let staticAllocLetArgs =
+        staticInitStaticAllocArgs 
+        @ List.map dynamicInitStaticAllocArgs ~f:(
+          fun { binding; mallocLoc = _; uses = _; type' = acornType } ->  
+          Expr.
+          { binding
+          ; value = Expr.StaticArrayInit { elements = []; type' = acornType}})
+      in
+      (* Stdio.prerr_endline
+        (Printf.sprintf
+          "All allocs count: %s; Malloc allocs count : %s; DynInit allocs count: %s; Static allocs count: %s"
+          (Int.to_string (List.length allocs))
+          (Int.to_string (List.length mallocArgAllocs))
+          (Int.to_string (List.length dynamicInitStaticAllocArgs))
+          (Int.to_string (List.length staticAllocLetArgs))); *)
+      let body = Acorn.Expr.Let { args = (letArgs1 @ letArgs2); body } in
       let result =
-        match allocs with
-        | [] -> body
-        | _ ->
+        match staticAllocLetArgs, mallocArgAllocs with
+        | [], [] -> body
+        | [], _ ->
           Acorn.Expr.MallocLet
-            { memArgs = List.map allocs ~f:AllocAcc.allocationToMallocMemArg; body }
+          { memArgs = List.map mallocArgAllocs ~f:AllocAcc.allocationToMallocMemArg; body }
+        | _, [] -> 
+          Acorn.Expr.StaticAllocLet
+            { args = staticAllocLetArgs; body }
+        | _, _ ->
+          Acorn.Expr.StaticAllocLet
+            { args = staticAllocLetArgs
+            ; body = 
+              Acorn.Expr.MallocLet
+              { memArgs = List.map mallocArgAllocs ~f:AllocAcc.allocationToMallocMemArg; body }}
       in
       return (result, [])
     in

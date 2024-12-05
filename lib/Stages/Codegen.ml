@@ -611,6 +611,7 @@ let rec getInnerAllocatedBlocks : type c d. (d, c) Acorn.Expr.t -> int = functio
   | ReifyDimensionIndex _ -> 1
   | ShapeProd _ -> 1
   | LoopKernel { kernel = _; captures = _; blocks; threads } -> blocks * threads
+  | StaticAllocLet { args; body }
   | Let { args; body } ->
     let bodyRes = getInnerAllocatedBlocks body in
     let argsRes =
@@ -621,6 +622,8 @@ let rec getInnerAllocatedBlocks : type c d. (d, c) Acorn.Expr.t -> int = functio
     in
     Int.max bodyRes argsRes
   | Box { indices = _; type' = _; body } -> getInnerAllocatedBlocks body
+  | StaticArrayInit {elements; type' = _} ->
+    List.length elements (* Each element is a literal *)
   | Literal _ -> 1
   | Values { elements; type' = _ } ->
     elements
@@ -1258,6 +1261,16 @@ and genExpr
     in
     let%bind body = genExpr ~hostOrDevice ~store:false body in
     return @@ Cx.initStruct boxType (body :: indices)
+  | _, StaticArrayInit {elements; type' = _} ->
+    let elements =
+      List.map elements ~f:(function
+      | IntLiteral i -> Cx.(intLit i)
+      | FloatLiteral f -> C.Literal (Float64Literal f)
+      | CharacterLiteral c -> C.Literal (CharLiteral c)
+      | BooleanLiteral b -> C.Literal (BoolLiteral b)
+      | StringLiteral s -> C.Literal (StringLiteral s))
+    in
+    return @@ C.Arr elements
   | _, Literal (IntLiteral i) -> return @@ Cx.(intLit i)
   | _, Literal (FloatLiteral f) -> return @@ C.Literal (Float64Literal f)
   | _, Literal (CharacterLiteral c) -> return @@ C.Literal (CharLiteral c)
@@ -1431,6 +1444,8 @@ and genExpr
   | _, Let let' -> genLet ~hostOrDevice ~genBody:(genExpr ~hostOrDevice ~store) let'
   | _, MallocLet mallocLet ->
     genMallocLet ~hostOrDevice ~genBody:(genExpr ~hostOrDevice ~store) mallocLet
+  | _, StaticAllocLet staticAllocLet ->
+    genStaticAllocLet ~hostOrDevice ~genBody:(genExpr ~hostOrDevice ~store) staticAllocLet
   | _, ReifyDimensionIndex { dim } -> GenState.storeExpr ~name:"reifiedDim" @@ genDim dim
   | _, ShapeProd shape -> GenState.storeExpr ~name:"shapeProd" @@ genShapeSize shape
   | ( _
@@ -3602,21 +3617,32 @@ and genMallocLet
   =
   fun ~hostOrDevice ~genBody { memArgs; body } ->
   let open GenState.Let_syntax in
-  let isStaticArrayAlloc (memLoc : Expr.mallocLoc) (memType : Acorn.Type.t) =
-    match hostOrDevice, memLoc, memType with
-    | Device, MallocDevice, Array { element = _; shape } ->
-      NeList.for_all shape ~f:(fun shapeElement ->
-        match shapeElement with
-        | Index.Add { const = _; refs; lens } -> Map.is_empty refs && Map.is_empty lens
-        | Index.ShapeRef _ -> false)
-    | _, _, _ -> false
-  in
   let%bind () =
     memArgs
     |> List.map ~f:(fun { memBinding; memType; memLoc } ->
-      let staticArrayAlloc = isStaticArrayAlloc memLoc memType in
-      match hostOrDevice, memLoc, memType with
-      | Device, MallocDevice, Array { element; shape } when staticArrayAlloc ->
+      let%bind varType = genType ~wrapInPtr:true memType in
+      let%bind mem = genMalloc ~hostOrDevice ~store:false ~memLoc memType in
+      GenState.write
+      @@ C.Define
+           { name = UniqueName memBinding; type' = Some varType; value = Some mem })
+    |> GenState.all_unit
+  in
+  genBody body
+
+and genStaticAllocLet
+  : type l sIn sOut.
+    hostOrDevice:l hostOrDevice
+    -> genBody:(sIn -> (sOut, _) GenState.u)
+    -> (l, sIn, Expr.captures) Expr.let'
+    -> (sOut, _) GenState.u
+  =
+  fun ~hostOrDevice ~genBody { args; body } ->
+  let open GenState.Let_syntax in
+  let%bind () =
+    args
+    |> List.map ~f:(fun { binding; value } ->
+      match value with 
+      | StaticArrayInit {elements = _; type' = Array { element; shape }} ->
         let size =
           shape
           |> NeList.map ~f:(fun shapeElement ->
@@ -3625,21 +3651,27 @@ and genMallocLet
             | Index.ShapeRef _ -> raise Unreachable.default)
           |> NeList.fold_left ~init:1 ~f:(fun acc a -> acc * a)
         in
+        let%bind initVals = genExpr ~hostOrDevice ~store:false value in
         let%bind element = genType ?wrapInPtr:(Some false) (Atom element) in
         let varType : C.type' = C.StaticArray { element; size } in
-        GenState.write
-        (* Statically allocated arrays live on stack and do not need to be initialized *)
-        (* And that is why this is an exception/edge case because it's not nicely written otherwise *)
-        @@ C.Define { name = UniqueName memBinding; type' = Some varType; value = None }
-      | _, _, _ ->
-        let%bind varType = genType ~wrapInPtr:true memType in
-        let%bind mem = genMalloc ~hostOrDevice ~store:false ~memLoc memType in
-        GenState.write
-        @@ C.Define
-             { name = UniqueName memBinding; type' = Some varType; value = Some mem })
+        (match initVals with
+        | Arr [] -> 
+          GenState.write
+          @@ C.Define { 
+            name = UniqueName binding
+          ; type' = Some varType
+          ; value = None }
+        | Arr elems -> 
+          GenState.write
+          @@ C.Define { 
+            name = UniqueName binding
+          ; type' = Some varType
+          ; value = Some (Arr elems)}
+        | _ -> raise Unreachable.default)
+      | _ -> raise Unreachable.default)
     |> GenState.all_unit
   in
-  genBody body
+  genBody body 
 
 and genMapBodySetup
   ~(loopVar : C.expr)
