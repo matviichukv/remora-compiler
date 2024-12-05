@@ -323,9 +323,11 @@
    0.0
    (*. noobj-scale (-. 0.0 (index{float | [5] [] 1} pred-box [4])))])
 
-(define (merge-box-and-class-delta{| classes-num boxes-num} [boxes [float boxes-num 5]] [class-delta [float classes-num]])
+(define (merge-box-and-class-delta{| classes-num boxes-num} 
+                                   [in-boxes [float boxes-num 5]] 
+                                   [class-delta [float classes-num]])
   (append{float | (+ boxes-num boxes-num boxes-num boxes-num boxes-num) classes-num []}
-          (reshape [(+ boxes-num boxes-num boxes-num boxes-num boxes-num)] boxes)
+          (reshape [(+ boxes-num boxes-num boxes-num boxes-num boxes-num)] in-boxes)
           class-delta))
 
 ;; Precondition: boxes-arr-size = 5 * boxes-num
@@ -371,10 +373,10 @@
   (define best-box-stats (fold{float [float 4] | boxes-num-1 [5] } box-cmp first-box-state rest-boxes))
   (define best-box-idx (float->int (index{float | [4] [] 1} best-box-stats [0])))
 
-  (define (calc-box-delta [box [float 5]] [idx [int]])
+  (define (calc-box-delta [in-box [float 5]] [idx [int]])
      (select{float |} (= best-box-idx idx)
-                      (best-yolo-box-delta box truth-box coord-scale obj-scale sqrt-flag rescore-flag)
-                      (other-yolo-box-delta box noobj-scale)))
+                      (best-yolo-box-delta in-box truth-box coord-scale obj-scale sqrt-flag rescore-flag)
+                      (other-yolo-box-delta in-box noobj-scale)))
   (define delta-boxes (calc-box-delta box-pred iota{| [(+ 1 boxes-num-1)]}))
   (define dout (merge-box-and-class-delta{| (+ 1 classes-1) (+ 1 boxes-num-1)} delta-boxes class-delta))
   dout)
