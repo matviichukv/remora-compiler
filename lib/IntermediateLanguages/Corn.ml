@@ -210,7 +210,7 @@ module Expr = struct
     ; threads : int
     }
 
-  and 'l values =
+  and 'l tuple =
     { elements : 'l t list
     ; type' : Type.tuple
     }
@@ -282,7 +282,7 @@ module Expr = struct
     | MapKernel : mapKernel kernel -> host t
     | Box : 'l box -> 'l t
     | Literal : literal -> _ t
-    | Values : 'l values -> 'l t
+    | Tuple : 'l tuple -> 'l t
     | ScalarPrimitive : 'l scalarPrimitive -> 'l t
     | TupleDeref : 'l tupleDeref -> 'l t
     | ContiguousSubArray : 'l contiguousSubArray -> 'l t
@@ -300,7 +300,7 @@ module Expr = struct
     | Literal (StringLiteral _) -> Literal StringLiteral
     | ScalarPrimitive scalarPrimitive -> scalarPrimitive.type'
     | TupleDeref tupleDeref -> tupleDeref.type'
-    | Values values -> Tuple values.type'
+    | Tuple tuple -> Tuple tuple.type'
     | Ref ref -> ref.type'
     | Frame frame -> frame.type'
     | BoxValue boxValue -> boxValue.type'
@@ -329,7 +329,7 @@ module Expr = struct
     | ProductionTupleAtom productionTupleAtom -> productionTupleAtom.type'
   ;;
 
-  let values elements = Values { elements; type' = List.map elements ~f:type' }
+  let tuple elements = Tuple { elements; type' = List.map elements ~f:type' }
   let let' ~args ~body = Let { args; body; type' = type' body }
 
   let tupleDeref ~tuple ~index =
@@ -420,9 +420,9 @@ module Expr = struct
       fun sexp_of_a { tuple; index; type' = _ } ->
       Sexp.List [ Sexp.Atom [%string "#%{index#Int}"]; sexp_of_t sexp_of_a tuple ]
 
-    and sexp_of_values : type a. (a -> Sexp.t) -> a values -> Sexp.t =
+    and sexp_of_tuple : type a. (a -> Sexp.t) -> a tuple -> Sexp.t =
       fun sexp_of_a { elements; type' = _ } ->
-      Sexp.List (Sexp.Atom "values" :: List.map elements ~f:(sexp_of_t sexp_of_a))
+      Sexp.List (Sexp.Atom "tuple" :: List.map elements ~f:(sexp_of_t sexp_of_a))
 
     and sexp_of_boxValue : type a. (a -> Sexp.t) -> a boxValue -> Sexp.t =
       fun sexp_of_a { box; type' = _ } ->
@@ -591,7 +591,7 @@ module Expr = struct
             [ Sexp.Atom "consumer"
             ; (match consumer with
                | Just consumer -> sexp_of_consumerOp sexp_of_a sexp_of_b consumer
-               | Nothing -> sexp_of_values sexp_of_a { elements = []; type' = [] })
+               | Nothing -> sexp_of_tuple sexp_of_a { elements = []; type' = [] })
             ]
         ]
 
@@ -720,7 +720,7 @@ module Expr = struct
       | ScalarPrimitive scalarPrimitive ->
         sexp_of_scalarPrimitive sexp_of_a scalarPrimitive
       | TupleDeref tupleDeref -> sexp_of_tupleDeref sexp_of_a tupleDeref
-      | Values values -> sexp_of_values sexp_of_a values
+      | Tuple tuple -> sexp_of_tuple sexp_of_a tuple
       | Ref ref -> sexp_of_ref ref
       | Frame frame -> sexp_of_frame sexp_of_a frame
       | BoxValue boxValue -> sexp_of_boxValue sexp_of_a boxValue

@@ -153,9 +153,9 @@ module Expr = struct
 
   and 's reifyShape = 's Index.t
   and 's reifyDimension = 's Index.t
-  and 's valuesExpr = ('s, 's t list) Source.annotate
+  and 's tuple = ('s, 's t list) Source.annotate
 
-  and 's valuesDeref =
+  and 's tupleDeref =
     { expr : 's t
     ; position : int
     }
@@ -179,8 +179,8 @@ module Expr = struct
     | Reshape of 's reshape
     | ReifyShape of 's reifyShape
     | ReifyDimension of 's reifyDimension
-    | ValuesExpr of 's valuesExpr
-    | ValuesDeref of 's valuesDeref
+    | Tuple of 's tuple
+    | TupleDeref of 's tupleDeref
     | IntLiteral of int
     | FloatLiteral of float
     | CharacterLiteral of char

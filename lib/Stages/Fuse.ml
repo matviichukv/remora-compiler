@@ -159,7 +159,7 @@ let rec getUsesInExpr : Expr.t -> Set.M(Identifier).t = function
       (module Identifier)
       (bodyUsages :: bodyTypeUsages :: typeUsages :: indicesUsages)
   | Literal _ -> Set.empty (module Identifier)
-  | Values { elements; type' } ->
+  | Tuple { elements; type' } ->
     Set.union
       (elements |> List.map ~f:getUsesInExpr |> Set.union_list (module Identifier))
       (getUsesInTuple type')
@@ -233,9 +233,9 @@ and getUsesInConsumer consumer =
     (?, (?, (x[2][0], ?)), ?, x[1][5]) =>
     Tuple [None; Tuple [None; Tuple [Value [0; 2]; None]]; None; Value [5; 1]] *)
 type mapValueLocation =
-  | Value of int list
+  | MapResultValue of int list
       (** represents a result of a map, with possible tuple dereferencing *)
-  | Tuple of mapValueLocation option list
+  | MapResultTuple of mapValueLocation option list
       (** Represents a tuple, which may contain mapValues in its elements *)
 [@@deriving sexp_of]
 
@@ -259,12 +259,12 @@ let rec getMapValue mapRefs =
   | LoopBlock _ -> None
   | Box _ -> None
   | Literal _ -> None
-  | Values { elements; type' = _ } ->
-    Some (Tuple (List.map elements ~f:(getMapValue mapRefs)))
+  | Tuple { elements; type' = _ } ->
+    Some (MapResultTuple (List.map elements ~f:(getMapValue mapRefs)))
   | TupleDeref { tuple; index; type' = _ } ->
     (match getMapValue mapRefs tuple with
-     | Some (Tuple mapValues) -> List.nth mapValues index |> Option.join
-     | Some (Value derefs) -> Some (Value (index :: derefs))
+     | Some (MapResultTuple mapValues) -> List.nth mapValues index |> Option.join
+     | Some (MapResultValue derefs) -> Some (MapResultValue (index :: derefs))
      | None -> None)
   | ScalarPrimitive _ | ContiguousSubArray _ | Append _ | Zip _ | Unzip _ -> None
 ;;
@@ -291,16 +291,16 @@ let rec getMapValueWithLoopBlockRoot mapRefs loopBlock mapValueLocation =
     if Expr.equal_loopBlock lb loopBlock then Some mapValueLocation else None
   | Box _ -> None
   | Literal _ -> None
-  | Values { elements; type' = _ } ->
+  | Tuple { elements; type' = _ } ->
     Some
-      (Tuple
+      (MapResultTuple
          (List.map
             elements
             ~f:(getMapValueWithLoopBlockRoot mapRefs loopBlock mapValueLocation)))
   | TupleDeref { tuple; index; type' = _ } ->
     (match getMapValueWithLoopBlockRoot mapRefs loopBlock mapValueLocation tuple with
-     | Some (Tuple mapValues) -> List.nth mapValues index |> Option.join
-     | Some (Value derefs) -> Some (Value (index :: derefs))
+     | Some (MapResultTuple mapValues) -> List.nth mapValues index |> Option.join
+     | Some (MapResultValue derefs) -> Some (MapResultValue (index :: derefs))
      | None -> None)
   | ScalarPrimitive _ | ContiguousSubArray _ | Append _ | Zip _ | Unzip _ -> None
 ;;
@@ -539,8 +539,8 @@ let rec liftFrom
         then `Fst arg
         else (
           match Map.find mapRefs arg.ref.id with
-          | Some (Value derefs) -> `Snd (arg, derefs)
-          | Some (Tuple _) | None -> `Trd arg))
+          | Some (MapResultValue derefs) -> `Snd (arg, derefs)
+          | Some (MapResultTuple _) | None -> `Trd arg))
     in
     (* mapRefs *)
     (* |> Map.sexp_of_m__t (module Identifier) sexp_of_mapValueLocation *)
@@ -678,7 +678,7 @@ let rec liftFrom
           ; targetMapResultElementBinding
           ; consumer = consumerExtraction
           }
-      , Values
+      , Tuple
           { elements =
               [ Ref { id = archerMapResultBinding; type' = Expr.type' bodyToLift }
               ; (match consumerExtraction with
@@ -691,7 +691,7 @@ let rec liftFrom
                           | Fold fold -> fold.type'
                           | Scatter scatter -> scatter.type')
                      }
-                 | None -> Expr.values [])
+                 | None -> Expr.tuple [])
               ]
           ; type'
           } ))
@@ -699,11 +699,11 @@ let rec liftFrom
   | Box { indices; body; bodyType; type' } ->
     let%map extraction, body = liftFrom target targetConsumer capturables mapRefs body in
     extraction, Box { indices; body; bodyType; type' }
-  | Values { elements; type' } ->
+  | Tuple { elements; type' } ->
     let%map extraction, elements =
       liftFromList elements ~f:(liftFrom target targetConsumer capturables mapRefs)
     in
-    extraction, Values { elements; type' }
+    extraction, Tuple { elements; type' }
   | TupleDeref { tuple; index; type' } ->
     let%map extraction, tuple =
       liftFrom target targetConsumer capturables mapRefs tuple
@@ -762,13 +762,13 @@ let mergeConsumers ~(target : Expr.consumerOp option) ~(archer : Expr.consumerOp
   | None, None ->
     return
       { mergedOp = None
-      ; getTargetConsumerResultFromBlockResult = (fun _ -> Expr.values [])
-      ; getArcherConsumerResultFromBlockResult = (fun _ -> Expr.values [])
+      ; getTargetConsumerResultFromBlockResult = (fun _ -> Expr.tuple [])
+      ; getArcherConsumerResultFromBlockResult = (fun _ -> Expr.tuple [])
       }
   | None, Some consumerOp ->
     return
       { mergedOp = Some consumerOp
-      ; getTargetConsumerResultFromBlockResult = (fun _ -> Expr.values [])
+      ; getTargetConsumerResultFromBlockResult = (fun _ -> Expr.tuple [])
       ; getArcherConsumerResultFromBlockResult =
           (fun blockResult -> Expr.tupleDeref ~tuple:blockResult ~index:1)
       }
@@ -777,7 +777,7 @@ let mergeConsumers ~(target : Expr.consumerOp option) ~(archer : Expr.consumerOp
       { mergedOp = Some consumerOp
       ; getTargetConsumerResultFromBlockResult =
           (fun blockResult -> Expr.tupleDeref ~tuple:blockResult ~index:1)
-      ; getArcherConsumerResultFromBlockResult = (fun _ -> Expr.values [])
+      ; getArcherConsumerResultFromBlockResult = (fun _ -> Expr.tuple [])
       }
   | Some (Reduce target), Some archer ->
     (match archer with
@@ -804,7 +804,7 @@ let mergeConsumers ~(target : Expr.consumerOp option) ~(archer : Expr.consumerOp
                           ; type' = argType
                           }
                     }
-                ; zero = Expr.values [ target.zero; archer.zero ]
+                ; zero = Expr.tuple [ target.zero; archer.zero ]
                 ; body =
                     Expr.let'
                       ~args:
@@ -821,7 +821,7 @@ let mergeConsumers ~(target : Expr.consumerOp option) ~(archer : Expr.consumerOp
                           ; value = Expr.tupleDeref ~tuple:secondBindingRef ~index:1
                           }
                         ]
-                      ~body:(Expr.values [ target.body; archer.body ])
+                      ~body:(Expr.tuple [ target.body; archer.body ])
                 ; d =
                     (assert (Index.equal_dimension target.d archer.d);
                      target.d)
@@ -859,7 +859,7 @@ let mergeConsumers ~(target : Expr.consumerOp option) ~(archer : Expr.consumerOp
                 ; zeroArg =
                     { zeroBinding
                     ; zeroValue =
-                        Expr.values [ target.zeroArg.zeroValue; archer.zeroArg.zeroValue ]
+                        Expr.tuple [ target.zeroArg.zeroValue; archer.zeroArg.zeroValue ]
                     }
                 ; body =
                     Expr.let'
@@ -871,7 +871,7 @@ let mergeConsumers ~(target : Expr.consumerOp option) ~(archer : Expr.consumerOp
                           ; value = Expr.tupleDeref ~tuple:zeroBindingRef ~index:1
                           }
                         ]
-                      ~body:(Expr.values [ target.body; archer.body ])
+                      ~body:(Expr.tuple [ target.body; archer.body ])
                 ; reverse = target.reverse
                 ; d =
                     (assert (Index.equal_dimension target.d archer.d);
@@ -1029,10 +1029,10 @@ let rec fuseLoops (scope : Set.M(Identifier).t)
               ; mapValueLocationBuilder =
                   (fun l ->
                     (* mapValueLocationBuilder (Tuple [ Some (Tuple [ Some l ]); None ])) *)
-                    mapValueLocationBuilder (Tuple [ Some l; None ]))
+                    mapValueLocationBuilder (MapResultTuple [ Some l; None ]))
               }
             ]
-          | Values { elements; type' } ->
+          | Tuple { elements; type' } ->
             let tupleSize = List.length elements in
             elements
             |> List.mapi ~f:(fun i e -> i, e)
@@ -1041,7 +1041,7 @@ let rec fuseLoops (scope : Set.M(Identifier).t)
                 env
                 (fun v ->
                   subBuilder
-                    (Values
+                    (Tuple
                        { elements =
                            List.mapi elements ~f:(fun i e ->
                              if i = location then v else e)
@@ -1049,7 +1049,7 @@ let rec fuseLoops (scope : Set.M(Identifier).t)
                        }))
                 (fun l ->
                   mapValueLocationBuilder
-                    (Tuple
+                    (MapResultTuple
                        (List.init tupleSize ~f:(fun i ->
                           if i = location then Some l else None))))
                 e)
@@ -1058,8 +1058,8 @@ let rec fuseLoops (scope : Set.M(Identifier).t)
               env
               (fun v -> subBuilder (TupleDeref { tuple = v; index; type' }))
               (function
-               | Value derefs -> mapValueLocationBuilder (Value (index :: derefs))
-               | Tuple elements -> List.nth_exn elements index)
+               | MapResultValue derefs -> mapValueLocationBuilder (MapResultValue (index :: derefs))
+               | MapResultTuple elements -> List.nth_exn elements index)
               tuple
           | Frame _
           | BoxValue _
@@ -1095,7 +1095,7 @@ let rec fuseLoops (scope : Set.M(Identifier).t)
     in
     let rec flatIdxToNested i mapBodyMatcher =
       match mapBodyMatcher with
-      | Binding _ -> if i = 0 then Some (Value []) else None
+      | Binding _ -> if i = 0 then Some (MapResultValue []) else None
       | Unpack elements ->
         let correctElt, correctIdx, toRemoveLeft =
           elements
@@ -1110,8 +1110,8 @@ let rec fuseLoops (scope : Set.M(Identifier).t)
         let nestedIdx = flatIdxToNested (i - toRemoveLeft) correctElt in
         (match nestedIdx with
          | None -> None
-         | Some (Tuple _) -> None
-         | Some (Value derefs) -> Some (Value (List.append derefs [ correctIdx ])))
+         | Some (MapResultTuple _) -> None
+         | Some (MapResultValue derefs) -> Some (MapResultValue (List.append derefs [ correctIdx ])))
       (* | Some (Value derefs) -> Some (Value (correctIdx :: derefs))) *)
     in
     (* let rec mapResultToDerefHelper mapResultName mapBodyMatcher = *)
@@ -1178,7 +1178,7 @@ let rec fuseLoops (scope : Set.M(Identifier).t)
         if Expr.equal (LoopBlock lb) loopBlock then Some originalArgBinding else None
       | Box _ -> None
       | Literal _ -> None
-      | Values { elements; type' = _ } ->
+      | Tuple { elements; type' = _ } ->
         List.find_map elements ~f:(fun e ->
           findActualArgBinding e originalArgBinding loopBlock)
       | ScalarPrimitive _ -> None
@@ -1220,9 +1220,9 @@ let rec fuseLoops (scope : Set.M(Identifier).t)
       (* | Some v -> *)
       let loc =
         match loopBlock.mapResults with
-        | [] -> Value []
-        | [ _ ] -> Tuple [ Some (Value []) ]
-        | mapResults -> Tuple (mapResultsToDerefs mapResults loopBlock.mapBodyMatcher)
+        | [] -> MapResultValue []
+        | [ _ ] -> MapResultTuple [ Some (MapResultValue []) ]
+        | mapResults -> MapResultTuple (mapResultsToDerefs mapResults loopBlock.mapBodyMatcher)
         (* match v with *)
         (* | Value v -> Value v *)
         (* (\* this is safe because each loop block has a least one element *\) *)
@@ -1293,7 +1293,7 @@ let rec fuseLoops (scope : Set.M(Identifier).t)
                    (getMapValueWithLoopBlockRoot
                       (Map.empty (module Identifier))
                       loopBlock
-                      (Tuple [ Some mapValueLocation; None ])
+                      (MapResultTuple [ Some mapValueLocation; None ])
                       argBindingBody))
             else (
               let mapRefs =
@@ -1301,7 +1301,7 @@ let rec fuseLoops (scope : Set.M(Identifier).t)
                 Map.singleton
                   (module Identifier)
                   actualBinding
-                  (Tuple [ Some mapValueLocation; None ])
+                  (MapResultTuple [ Some mapValueLocation; None ])
               in
               let argBindingMapValue = getMapValue mapRefs argBindingBody in
               match argBindingMapValue with
@@ -1456,7 +1456,7 @@ let rec fuseLoops (scope : Set.M(Identifier).t)
                                                  }
                                                ]
                                              ~body:
-                                               (Expr.values
+                                               (Expr.tuple
                                                   [ Ref
                                                       { id = targetMapResultElementBinding
                                                       ; type' =
@@ -1481,7 +1481,7 @@ let rec fuseLoops (scope : Set.M(Identifier).t)
                                   ~args:
                                     ([ { binding = targetMapResultBinding
                                        ; value =
-                                           Expr.values
+                                           Expr.tuple
                                              (List.mapi
                                                 loopBlock.mapResults
                                                 ~f:(fun index _ ->
@@ -1497,7 +1497,7 @@ let rec fuseLoops (scope : Set.M(Identifier).t)
                                            (let indexOffset =
                                               List.length loopBlock.mapResults
                                             in
-                                            Expr.values
+                                            Expr.tuple
                                               (List.mapi liftedResults ~f:(fun index _ ->
                                                  Expr.tupleDeref
                                                    ~tuple:
@@ -1523,7 +1523,7 @@ let rec fuseLoops (scope : Set.M(Identifier).t)
                                          [ { binding = targetArg.binding
                                            ; value =
                                                subForLoopBlockInArgValue
-                                                 (Expr.values
+                                                 (Expr.tuple
                                                     [ Ref
                                                         { id = targetMapResultBinding
                                                         ; type' =
@@ -1632,9 +1632,9 @@ let rec fuseLoops (scope : Set.M(Identifier).t)
     let%map body = fuseLoops scope body in
     Box { indices; body; bodyType; type' }
   | Literal _ as expr -> return expr
-  | Values { elements; type' } ->
+  | Tuple { elements; type' } ->
     let%map elements = elements |> List.map ~f:(fuseLoops scope) |> FuseState.all in
-    Values { elements; type' }
+    Tuple { elements; type' }
   | TupleDeref { tuple; index; type' } ->
     let%map tuple = fuseLoops scope tuple in
     TupleDeref { tuple; index; type' }

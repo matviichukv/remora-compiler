@@ -161,7 +161,7 @@ module Mem = struct
         ; index : int
         ; type' : Type.t
         }
-    | Values of
+    | Tuple of
         { elements : t list
         ; type' : Type.t
         }
@@ -177,7 +177,7 @@ module Mem = struct
   let type' = function
     | Ref ref -> ref.type'
     | TupleDeref tupleDeref -> tupleDeref.type'
-    | Values values -> values.type'
+    | Tuple tuple -> tuple.type'
     | Index index -> index.type'
   ;;
 
@@ -187,11 +187,11 @@ module Mem = struct
       | Type.Array _ | Type.Atom _ -> raise (Unreachable.Error "Expected tuple type")
     in
     match tuple with
-    | Values { elements; type' = _ } -> List.nth_exn elements index
+    | Tuple { elements; type' = _ } -> List.nth_exn elements index
     | _ -> TupleDeref { tuple; index; type' = extractElementType (type' tuple) }
   ;;
 
-  let values elements = Values { elements; type' = Tuple (List.map elements ~f:type') }
+  let tuple elements = Tuple { elements; type' = Tuple (List.map elements ~f:type') }
 
   module Sexp_of = struct
     let sexp_of_ref { id; type' = _ } = Sexp.Atom (Identifier.show id)
@@ -200,8 +200,8 @@ module Mem = struct
       | Ref ref -> sexp_of_ref ref
       | TupleDeref { tuple; index; type' = _ } ->
         Sexp.List [ Sexp.Atom [%string "#%{index#Int}"]; sexp_of_t tuple ]
-      | Values { elements; type' = _ } ->
-        Sexp.List (Sexp.Atom "values" :: List.map elements ~f:sexp_of_t)
+      | Tuple { elements; type' = _ } ->
+        Sexp.List (Sexp.Atom "tuple" :: List.map elements ~f:sexp_of_t)
       | Index { mem; offset; type' } ->
         Sexp.List
           [ Sexp.Atom "index"
@@ -503,7 +503,7 @@ module Expr = struct
         (** where the map results should be written to after the map is complete *)
     }
 
-  and ('l, 'c) values =
+  and ('l, 'c) tuple =
     { elements : ('l, 'c) t list
     ; type' : Type.tuple
     }
@@ -585,7 +585,7 @@ module Expr = struct
     | Let : ('l, ('l, 'c) t, 'c) let' -> ('l, 'c) t
     | Box : ('l, 'c) box -> ('l, 'c) t
     | Literal : literal -> (_, _) t
-    | Values : ('l, 'c) values -> ('l, 'c) t
+    | Tuple : ('l, 'c) tuple -> ('l, 'c) t
     | ScalarPrimitive : ('l, 'c) scalarPrimitive -> ('l, 'c) t
     | TupleDeref : ('l, 'c) tupleDeref -> ('l, 'c) t
     | ContiguousSubArray : ('l, 'c) contiguousSubArray -> ('l, 'c) t
@@ -622,7 +622,7 @@ module Expr = struct
     | Literal (StringLiteral _) -> Atom (Literal StringLiteral)
     | ScalarPrimitive scalarPrimitive -> scalarPrimitive.type'
     | TupleDeref tupleDeref -> tupleDeref.type'
-    | Values values -> Tuple values.type'
+    | Tuple tuple -> Tuple tuple.type'
     | Ref ref -> ref.type'
     | BoxValue boxValue -> boxValue.type'
     | IndexLet indexLet -> indexLet.type'
@@ -737,12 +737,12 @@ module Expr = struct
       Sexp.List
         [ Sexp.Atom [%string "#%{index#Int}"]; sexp_of_t sexp_of_a sexp_of_c tuple ]
 
-    and sexp_of_values
-      : type a c. (a -> Sexp.t) -> (c -> Sexp.t) -> (a, c) values -> Sexp.t
+    and sexp_of_tuple
+      : type a c. (a -> Sexp.t) -> (c -> Sexp.t) -> (a, c) tuple -> Sexp.t
       =
       fun sexp_of_a sexp_of_c { elements; type' = _ } ->
       Sexp.List
-        (Sexp.Atom "values" :: List.map elements ~f:(sexp_of_t sexp_of_a sexp_of_c))
+        (Sexp.Atom "tuple" :: List.map elements ~f:(sexp_of_t sexp_of_a sexp_of_c))
 
     and sexp_of_boxValue
       : type a c. (a -> Sexp.t) -> (c -> Sexp.t) -> (a, c) boxValue -> Sexp.t
@@ -1046,7 +1046,7 @@ module Expr = struct
                | Just consumer ->
                  sexp_of_consumerOp sexp_of_a sexp_of_b sexp_of_c consumer
                | Nothing ->
-                 sexp_of_values sexp_of_a sexp_of_c { elements = []; type' = [] })
+                 sexp_of_tuple sexp_of_a sexp_of_c { elements = []; type' = [] })
             ]
         ]
 
@@ -1198,7 +1198,7 @@ module Expr = struct
       | ScalarPrimitive scalarPrimitive ->
         sexp_of_scalarPrimitive sexp_of_a sexp_of_c scalarPrimitive
       | TupleDeref tupleDeref -> sexp_of_tupleDeref sexp_of_a sexp_of_c tupleDeref
-      | Values values -> sexp_of_values sexp_of_a sexp_of_c values
+      | Tuple tuple -> sexp_of_tuple sexp_of_a sexp_of_c tuple
       | Ref ref -> sexp_of_ref ref
       | BoxValue boxValue -> sexp_of_boxValue sexp_of_a sexp_of_c boxValue
       | IndexLet indexLet -> sexp_of_indexLet sexp_of_a sexp_of_c indexLet
@@ -1214,7 +1214,7 @@ module Expr = struct
           sexp_of_c
           (function
            | Some consumer -> sexp_of_consumerOp sexp_of_a sexp_of_a sexp_of_c consumer
-           | None -> sexp_of_values sexp_of_a sexp_of_c { elements = []; type' = [] })
+           | None -> sexp_of_tuple sexp_of_a sexp_of_c { elements = []; type' = [] })
           loopBlock
       | LoopKernel loopKernel ->
         sexp_of_kernel

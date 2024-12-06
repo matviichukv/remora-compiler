@@ -231,7 +231,7 @@ module Expr = struct
         ; type' : Type.array
         }
 
-  and values =
+  and tuple =
     { elements : atom list
     ; type' : Type.tuple
     }
@@ -261,7 +261,7 @@ module Expr = struct
   and atom =
     | Box of box
     | Literal of literal
-    | Values of values
+    | Tuple of tuple
     | ArrayAsAtom of arrayAtomic
     | AtomicPrimitive of atomicPrimitive
     | TupleDeref of tupleDeref
@@ -280,7 +280,7 @@ module Expr = struct
     | Literal (StringLiteral _) -> Literal StringLiteral
     | ArrayAsAtom arrayAtomic -> arrayAtomic.type'
     | AtomicPrimitive atomicPrimitive -> atomicPrimitive.type'
-    | Values values -> Tuple values.type'
+    | Tuple tuple -> Tuple tuple.type'
     | TupleDeref tupleDeref -> tupleDeref.type'
   ;;
 

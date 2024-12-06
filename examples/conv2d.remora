@@ -105,9 +105,9 @@
   (define dw (conv-2d{| n-1 o_dil-1 (+ k-2 2) 1 0} data dout_dil 0.0))
   (define din (conv-2d{| (+ o_dil-1 1 k-2 k-2 1) (+ k-2 1) (+ n-1 1) 1 0} dout_dil_pad weights_mirror 0.0))
   (define db (reduce{float | o-1 [] []} +. (reduce{float | o-1 [] []} +. dout)))
-  (values (box () [float (+ k-2 2) (+ k-2 2)] dw) 
-          (box () [float (+ n-1 1) (+ n-1 1)] din)
-          (box () [float] db)))
+  (tuple (box () [float (+ k-2 2) (+ k-2 2)] dw) 
+         (box () [float (+ n-1 1) (+ n-1 1)] din)
+         (box () [float] db)))
 
 (define (conv-2d-back-channel{| n-1 k-2 c-1 o-1 stride o*stride o_dil-1}
           [data [float (+ c-1 1) (+ n-1 1) (+ n-1 1)]]
@@ -123,9 +123,9 @@
   ;; Not sure why this doesn't work, will check later
   ;; (define db (unbox (#2 res) (db_unboxed) (reduce{float | c-1 [] []} +. db_unboxed)))
   ;; TODO: this is so incredibly verbose
-  (values (box () [float (+ c-1 1) (+ k-2 2) (+ k-2 2)] dw)
-          (box () [float (+ c-1 1) (+ n-1 1) (+ n-1 1)] din)
-          (box () [float] db)))
+  (tuple (box () [float (+ c-1 1) (+ k-2 2) (+ k-2 2)] dw)
+         (box () [float (+ c-1 1) (+ n-1 1) (+ n-1 1)] din)
+         (box () [float] db)))
 
 ;; ---------------------------- FULLY CONNECTED ---------------------------------------------
 (define (fc-2d-fwd{| in-1 out-1} [input [float (+ in-1 1)]]
@@ -150,10 +150,10 @@
   (define dw (*. (replicate{float | [(+ in-1 1)] []} dout)
                  (replicate{float | [(+ o-1 1)] [(+ in-1 1)]} in)))
   ;; (define db (reduce{float | o-1 [] []} +. dout))
-  (values (box () [float (+ in-1 1)] din)
-          (box () [float (+ o-1 1) (+ in-1 1)] dw)
-          ;; it's just the dout vector
-          (box () [float (+ o-1 1)] dout)))
+  (tuple (box () [float (+ in-1 1)] din)
+         (box () [float (+ o-1 1) (+ in-1 1)] dw)
+         ;; it's just the dout vector
+         (box () [float (+ o-1 1)] dout)))
 
 
 ;;(conv1d{| 4 2 3} [1.0 2.0 3.0 4.0 5.0] [[0.5 1.0 1.5] [1.0 1.0 1.0]])
@@ -221,9 +221,9 @@
   (define diff-x (-. input mean-to-use))
   (define normalized-input (/. diff-x (sqrt (+. var-to-use 0.000001))))
   (define output (+. normalized-input bias))
-  (values (box () [float k (+ n-1 1) (+ n-1 1)] output)
-          (box () [float k] new-rolling-mean)
-          (box () [float k] new-rolling-var)))
+  (tuple (box () [float k (+ n-1 1) (+ n-1 1)] output)
+         (box () [float k] new-rolling-mean)
+         (box () [float k] new-rolling-var)))
 
 ;; Returns 4 values: delta for mean, delta for var, delta for bias, delta for input
 (define (batch-norm-2d-back{| n-1 k}
@@ -246,10 +246,10 @@
   (define din      (+. (/. dout (sqrt var-to-use))
                        (+. (/. (*. 2.0 (*. dvar (-. input mean-to-use))) spatial)
                            (/. dmean spatial))))
-  (values (box () [float k] dmean)
-          (box () [float k] dvar)
-          (box () [float k] db)
-          (box () [float k (+ n-1 1) (+ n-1 1)] din)))
+  (tuple (box () [float k] dmean)
+         (box () [float k] dvar)
+         (box () [float k] db)
+         (box () [float k (+ n-1 1) (+ n-1 1)] din)))
 ;; ---------------------------- DETECTION ---------------------------------------------
 
 ;; yolo-box - 5 long vector - [x y w h confidence]

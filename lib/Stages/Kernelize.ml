@@ -173,7 +173,7 @@ let rec getIterationSpace (expr : Nested.t) : int =
     let consumer = getIterationSpaceConsumer lb.consumer in
     (size * mapBody) + consumer
   | Box b -> getIterationSpace b.body
-  | Values { elements; type' = _ } -> getIterationSpaceList elements
+  | Tuple { elements; type' = _ } -> getIterationSpaceList elements
   | TupleDeref { tuple; index = _; type' = _ } -> getIterationSpace tuple
   | ContiguousSubArray
       { arrayArg; indexArg; originalShape = _; resultShape = _; type' = _ } ->
@@ -369,9 +369,9 @@ let rec findAllParOptions (expr : Nested.t) (structureMap : IndexMode.cuda_t)
   | Box { indices; body; bodyType; type' } ->
     let newBody, paths = findAllParOptions body structureMap in
     Box { body = newBody; indices; bodyType; type' }, paths
-  | Values { elements; type' } ->
+  | Tuple { elements; type' } ->
     let newElements, paths = findAllParOptionsList elements structureMap in
-    Values { elements = newElements; type' }, paths
+    Tuple { elements = newElements; type' }, paths
   | TupleDeref { tuple; index; type' } ->
     let newTuple, paths = findAllParOptions tuple structureMap in
     TupleDeref { tuple = newTuple; index; type' }, paths
@@ -561,7 +561,7 @@ let rec computeKernelSize
   | Box { indices = _; body; bodyType = _; type' = _ } ->
     computeKernelSize body loopBlockParTable
   | Literal _ -> default
-  | Values { elements; type' = _ } ->
+  | Tuple { elements; type' = _ } ->
     elements
     |> List.map ~f:(fun e -> computeKernelSize e loopBlockParTable)
     |> List.reduce ~f:(fun (b1, t1) (b2, t2) -> max b1 b2, max t1 t2)
@@ -693,7 +693,7 @@ let rec rewriteWithPar (expr : Nested.t) loopBlockParTable : Corn.t =
         }
       in
       let kernel = Corn.Expr.{ kernel = lb; blocks; threads } in
-      Corn.Expr.values [ Corn.Expr.MapKernel kernel; Corn.Expr.values [] ]
+      Corn.Expr.tuple [ Corn.Expr.MapKernel kernel; Corn.Expr.tuple [] ]
     | LoopBlock
         { label
         ; frameShape
@@ -780,9 +780,9 @@ let rec rewriteWithPar (expr : Nested.t) loopBlockParTable : Corn.t =
       let body = rewriteWithParHelper body in
       Box { indices; body; bodyType; type' }
     | Literal lit -> Literal lit
-    | Values { elements; type' } ->
+    | Tuple { elements; type' } ->
       let elements = List.map elements ~f:rewriteWithParHelper in
-      Values { elements; type' }
+      Tuple { elements; type' }
     | ScalarPrimitive { op; args; type' } ->
       let args = List.map args ~f:rewriteWithParHelper in
       let op = convertScalarOp op in
@@ -790,7 +790,7 @@ let rec rewriteWithPar (expr : Nested.t) loopBlockParTable : Corn.t =
     | TupleDeref { index; tuple; type' = _ } ->
       let tuple = rewriteWithParHelper tuple in
       (match tuple with
-       | Values { elements; type' = _ } -> List.nth_exn elements index
+       | Tuple { elements; type' = _ } -> List.nth_exn elements index
        | tuple ->
          Corn.Expr.tupleDeref ~tuple ~index
          (* TupleDeref { index; tuple; type' = Corn.Expr.type' tuple } *))
@@ -995,11 +995,11 @@ and rewriteWithParDevice (expr : Nested.t) loopBlockParTable =
     let body = rewriteWithParDevice body loopBlockParTable in
     Box { indices; body; bodyType; type' }
   | Literal l -> Literal l
-  | Values { elements; type' } ->
+  | Tuple { elements; type' } ->
     let elements =
       List.map elements ~f:(fun e -> rewriteWithParDevice e loopBlockParTable)
     in
-    Values { elements; type' }
+    Tuple { elements; type' }
   | ScalarPrimitive { op; args; type' } ->
     let op = convertScalarOp op in
     let args = List.map args ~f:(fun a -> rewriteWithParDevice a loopBlockParTable) in
@@ -1112,7 +1112,7 @@ and rewriteWithParConsumerHostDevicePar consumer indexMode loopBlockParTable
 
 and exprToMapBody (expr : Nested.t) loopBlockParTable =
   match expr with
-  | (TupleDeref _ | Values _ | LoopBlock _) as expr ->
+  | (TupleDeref _ | Tuple _ | LoopBlock _) as expr ->
     let possibleSubMap = exprToMapBodySubMap expr loopBlockParTable in
     (match possibleSubMap with
      | None -> MapBodyExpr (rewriteWithParDevice expr loopBlockParTable)
@@ -1159,7 +1159,7 @@ and exprToMapBodySubMap (expr : Nested.t) loopBlockParTable : Corn.Expr.mapBody 
           Some (MapBodySubMap (List.nth_exn values index))
         | Corn.Expr.MapBodySubMap subMap ->
           Some (MapBodySubMap (MapBodyDeref { tuple = subMap; index }))))
-  | Values { elements; type' = _ } ->
+  | Tuple { elements; type' = _ } ->
     let elements =
       elements |> List.map ~f:(fun e -> exprToMapBodySubMap e loopBlockParTable)
     in

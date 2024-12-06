@@ -55,7 +55,7 @@ rule read =
   | "box"    { BOX }
   | "boxes"  { BOXES }
   | "unbox"  { UNBOX }
-  | "values" { VALUES }
+  | "tuple"  { TUPLE }
   | '#' (posint as idx) { P.TUPLE_DEREF (int_of_string idx) }
   | "t-app"  { T_APP }
   | "i-app"  { I_APP }
@@ -66,7 +66,7 @@ rule read =
   | "Forall" { TYPE_FORALL }
   | "Pi"     { TYPE_PI }
   | "Sigma"  { TYPE_SIGMA }
-  | "Values" { TYPE_VALUES }
+  | "Tuple"  { TYPE_TUPLE }
   | "->"     { RIGHT_ARROW }
   | "+"      { PLUS }
   | "++"     { APPEND }

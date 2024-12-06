@@ -243,8 +243,8 @@ let assertValueRestriction value =
       | Primitive _ -> true
       | Map _ -> false
       | ContiguousSubArray _ -> false
-      | ValuesExpr {components; type' = _ } -> List.for_all ~f:isValueArray components
-      | ValuesDeref tupleDeref -> isValueArray tupleDeref.expr
+      | Tuple {components; type' = _ } -> List.for_all ~f:isValueArray components
+      | TupleDeref tupleDeref -> isValueArray tupleDeref.expr
     and isValueAtom = function
       | TermLambda _ -> true
       | TypeLambda _ -> true
@@ -338,14 +338,14 @@ let rec genNewBindingsArray env (expr : Explicit.Expr.array) =
     return
     @@ Expr.ContiguousSubArray
          { arrayArg; indexArg; originalShape; resultShape; cellShape; l; type' }
-  | ValuesExpr { components; type' } ->
+  | Tuple { components; type' } ->
     let%bind components =
       components |> List.map ~f:(genNewBindingsArray env) |> InlineState.all
     in
-    return @@ Expr.ValuesExpr { components; type' }
-  | ValuesDeref { expr; position; type' } ->
+    return @@ Expr.Tuple { components; type' }
+  | TupleDeref { expr; position; type' } ->
     let%bind expr = genNewBindingsArray env expr in
-    return @@ Expr.ValuesDeref { expr; position; type' }
+    return @@ Expr.TupleDeref { expr; position; type' }
 
 and genNewBindingsAtom env (expr : Explicit.Expr.atom) =
   let open Explicit in
@@ -484,7 +484,7 @@ let rec inlineArray indexEnv (appStack : appStack) (array : Explicit.Expr.array)
     (match name with
      | Func func ->
        return
-         ( scalar (I.Values { elements = []; type' = [] })
+         ( scalar (I.Tuple { elements = []; type' = [] })
          , FunctionSet.One (Primitive { func; type'; appStack }) )
      | Val Iota ->
        (match appStack with
@@ -546,7 +546,7 @@ let rec inlineArray indexEnv (appStack : appStack) (array : Explicit.Expr.array)
            ; type' = inlineArrayTypeWithStack [] type'
            })
     , functions )
-  | ValuesExpr { components; type' = _ } ->
+  | Tuple { components; type' = _ } ->
     let%bind components, functions =
       List.map ~f:(inlineArray indexEnv appStack) components
       |> InlineState.all
@@ -560,8 +560,8 @@ let rec inlineArray indexEnv (appStack : appStack) (array : Explicit.Expr.array)
         Nucleus.Expr.ArrayAsAtom { array = elt; type' }, type')
       |> List.unzip
     in
-    return (scalar (I.Values { elements = components; type' }), functions)
-  | ValuesDeref { expr; position; type' } ->
+    return (scalar (I.Tuple { elements = components; type' }), functions)
+  | TupleDeref { expr; position; type' } ->
     let arrayType = E.arrayType expr in
     let atomArrayType =
       match arrayType with
@@ -655,9 +655,9 @@ and inlineAtom indexEnv (appStack : appStack) (atom : Explicit.Expr.atom)
           Set.diff variablesUsed variablesDeclared
         | E.ReifyIndex { index; type' = _ } -> indexCaptures index
         | E.Primitive { name = _; type' = _ } -> Set.empty (module Identifier)
-        | E.ValuesExpr { components; type' = _ } ->
+        | E.Tuple { components; type' = _ } ->
           Set.union_list (module Identifier) (List.map ~f:arrayCaptures components)
-        | E.ValuesDeref { expr; position = _; type' = _ } -> arrayCaptures expr
+        | E.TupleDeref { expr; position = _; type' = _ } -> arrayCaptures expr
         | E.ContiguousSubArray
             { arrayArg; indexArg; originalShape; resultShape; cellShape; l; type' = _ } ->
           let arrayArgCaptures = arrayCaptures arrayArg
@@ -706,7 +706,7 @@ and inlineAtom indexEnv (appStack : appStack) (atom : Explicit.Expr.atom)
       in
       atomCaptures (E.TermLambda lambda)
     in
-    ( scalar (I.Values { elements = []; type' = [] })
+    ( scalar (I.Tuple { elements = []; type' = [] })
     , FunctionSet.One (Lambda { lambda; id; captures }) )
   | TypeLambda { params; body; type' = _ } ->
     (match appStack with
@@ -722,7 +722,7 @@ and inlineAtom indexEnv (appStack : appStack) (atom : Explicit.Expr.atom)
      | [] ->
        (* Empty stack means the type lambda's value is not passed to a type
           application, so we can replace it with a unit *)
-       return (scalar (I.Values { elements = []; type' = [] }), FunctionSet.Empty)
+       return (scalar (I.Tuple { elements = []; type' = [] }), FunctionSet.Empty)
      | _ :: _ as stack ->
        raise
          (Unreachable.Error
@@ -744,7 +744,7 @@ and inlineAtom indexEnv (appStack : appStack) (atom : Explicit.Expr.atom)
      | [] ->
        (* Empty stack means the index lambda's value is not passed to an index
           application, so we can replace it with a unit *)
-       return (scalar (I.Values { elements = []; type' = [] }), FunctionSet.Empty)
+       return (scalar (I.Tuple { elements = []; type' = [] }), FunctionSet.Empty)
      | _ as stack ->
        raise
          (Unreachable.Error

@@ -266,7 +266,7 @@ module Expr = struct
         ; type' : Type.t
         }
 
-  and values =
+  and tuple =
     { elements : t list
     ; type' : Type.tuple
     }
@@ -318,7 +318,7 @@ module Expr = struct
     | LoopBlock of loopBlock
     | Box of box
     | Literal of literal
-    | Values of values
+    | Tuple of tuple
     | ScalarPrimitive of scalarPrimitive
     | TupleDeref of tupleDeref
     | ContiguousSubArray of contiguousSubArray
@@ -336,7 +336,7 @@ module Expr = struct
     | Literal (StringLiteral _) -> Literal StringLiteral
     | ScalarPrimitive scalarPrimitive -> scalarPrimitive.type'
     | TupleDeref tupleDeref -> tupleDeref.type'
-    | Values values -> Tuple values.type'
+    | Tuple tuple -> Tuple tuple.type'
     | Ref ref -> ref.type'
     | Frame frame -> frame.type'
     | BoxValue boxValue -> boxValue.type'
@@ -362,7 +362,7 @@ module Expr = struct
     | ProductionTupleAtom productionTupleAtom -> productionTupleAtom.type'
   ;;
 
-  let values elements = Values { elements; type' = List.map elements ~f:type' }
+  let tuple elements = Tuple { elements; type' = List.map elements ~f:type' }
   let let' ~args ~body = Let { args; body; type' = type' body }
 
   let ( + ) a b =
@@ -460,9 +460,9 @@ module Expr = struct
     and sexp_of_tupleDeref { tuple; index; type' = _ } =
       Sexp.List [ Sexp.Atom [%string "#%{index#Int}"]; sexp_of_t tuple ]
 
-    and sexp_of_values ({ elements; type' = _ } : values) =
+    and sexp_of_tuple ({ elements; type' = _ } : tuple) =
       Sexp.List
-        (Sexp.Atom "values" (* :: List.sexp_of_t Type.sexp_of_t type' *)
+        (Sexp.Atom "tuple" (* :: List.sexp_of_t Type.sexp_of_t type' *)
          :: List.map elements ~f:sexp_of_t)
 
     and sexp_of_boxValue { box; type' = _ } =
@@ -596,7 +596,7 @@ module Expr = struct
             [ Sexp.Atom "consumer"
             ; (match consumer with
                | Some consumer -> sexp_of_consumerOp consumer
-               | None -> sexp_of_values { elements = []; type' = [] })
+               | None -> sexp_of_tuple { elements = []; type' = [] })
             ]
         ]
 
@@ -630,7 +630,7 @@ module Expr = struct
       | Literal lit -> sexp_of_literal lit
       | ScalarPrimitive scalarPrimitive -> sexp_of_scalarPrimitive scalarPrimitive
       | TupleDeref tupleDeref -> sexp_of_tupleDeref tupleDeref
-      | Values values -> sexp_of_values values
+      | Tuple tuple -> sexp_of_tuple tuple
       | Ref ref -> sexp_of_ref ref
       | Frame frame -> sexp_of_frame frame
       | BoxValue boxValue -> sexp_of_boxValue boxValue

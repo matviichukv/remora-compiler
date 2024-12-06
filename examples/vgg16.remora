@@ -112,9 +112,9 @@
   (define dw (conv-2d{| n-1 o_dil-1 (+ k-2 2) 1 0} data dout_dil 0.0))
   (define din (conv-2d{| (+ o_dil-1 1 k-2 k-2 1) (+ k-2 1) (+ n-1 1) 1 0} dout_dil_pad weights_mirror 0.0))
   (define db (reduce{float | (+ o-1 1 o-1) [] []} +. (reshape [(+ o-1 1 o-1 1)] dout)))
-  (values (box () [float (+ k-2 2) (+ k-2 2)] dw)
-          (box () [float (+ n-1 1) (+ n-1 1)] din)
-          (box () [float] db)))
+  (tuple (box () [float (+ k-2 2) (+ k-2 2)] dw)
+         (box () [float (+ n-1 1) (+ n-1 1)] din)
+         (box () [float] db)))
 
 (define (conv-2d-back-channel{| n-1 k-2 c-1 o-1 stride o*stride o_dil-1}
           [data [float (+ c-1 1) (+ n-1 1) (+ n-1 1)]]
@@ -130,9 +130,9 @@
   ;; Not sure why this doesn't work, will check later
   ;; (define db (unbox (#2 res) (db_unboxed) (reduce{float | c-1 [] []} +. db_unboxed)))
   ;; TODO: this is so incredibly verbose
-  (values (box () [float (+ c-1 1) (+ k-2 2) (+ k-2 2)] dw)
-          (box () [float (+ c-1 1) (+ n-1 1) (+ n-1 1)] din)
-          (box () [float] db)))
+  (tuple (box () [float (+ c-1 1) (+ k-2 2) (+ k-2 2)] dw)
+         (box () [float (+ c-1 1) (+ n-1 1) (+ n-1 1)] din)
+         (box () [float] db)))
 
 ;; ---------------------------- FULLY CONNECTED ---------------------------------------------
 (define (fc-2d-fwd{| in-1 out-1} [input [float (+ in-1 1)]]
@@ -157,10 +157,10 @@
   (define dw (*. (replicate{float | [(+ in-1 1)] []} dout)
                  (replicate{float | [(+ o-1 1)] [(+ in-1 1)]} in)))
   ;; (define db (reduce{float | o-1 [] []} +. dout))
-  (values (box () [float (+ in-1 1)] din)
-          (box () [float (+ o-1 1) (+ in-1 1)] dw)
-          ;; it's just the dout vector
-          (box () [float (+ o-1 1)] dout)))
+  (tuple (box () [float (+ in-1 1)] din)
+         (box () [float (+ o-1 1) (+ in-1 1)] dw)
+         ;; it's just the dout vector
+         (box () [float (+ o-1 1)] dout)))
 
 
 ;; ---------------------------- [MAX] POOLING ---------------------------------------------

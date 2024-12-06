@@ -398,7 +398,7 @@ and makeMap frameShape args =
     List.map mapArgs ~f:(fun { binding; ref } ->
       Ref { id = binding; type' = elementOfArrayType frameShape ref.type' })
   in
-  let body = Values { elements; type' = List.map elements ~f:Nested.Expr.type' } in
+  let body = Tuple { elements; type' = List.map elements ~f:Nested.Expr.type' } in
   let matcher = Unpack (List.map args ~f:(fun (id, _) -> Binding id)) in
   letArgs, mapArgs, body, matcher
 
@@ -413,10 +413,10 @@ and nestAtom : Nucleus.Expr.atom -> (Nested.t, _) NestState.u =
     let type' = nestTypeSigma type' in
     Box { indices; body; bodyType; type' }
   | Literal lit -> return (Literal lit)
-  | Values { elements; type' } ->
+  | Tuple { elements; type' } ->
     let%map elements = elements |> List.map ~f:nestAtom |> NestState.all in
     let type' = nestTypeTuple type' in
-    Values { elements; type' }
+    Tuple { elements; type' }
   | AtomicPrimitive { op; args; type' } ->
     let%bind op = nestScalarOp op in
     let%map args = args |> List.map ~f:nestAtom |> NestState.all in

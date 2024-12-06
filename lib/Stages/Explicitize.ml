@@ -34,8 +34,8 @@ let rec funcParamNamesArray env : Typed.Expr.array -> string list option = funct
   | Let l ->
     let env = Map.set env ~key:l.binding ~data:(funcParamNamesArray env l.value) in
     funcParamNamesArray env l.body
-  | ValuesExpr tuple -> funcParamNamesTuple env tuple
-  | ValuesDeref { expr; position = _; type' = _ } -> funcParamNamesArray env expr
+  | Tuple tuple -> funcParamNamesTuple env tuple
+  | TupleDeref { tuple; position = _; type' = _ } -> funcParamNamesArray env tuple
   | Primitive p ->
     (match p.name with
      | Func func ->
@@ -91,7 +91,7 @@ let rec funcParamNamesArray env : Typed.Expr.array -> string list option = funct
               [%string "io-%{name}-arg%{i#Int}"]))
      | Val _ -> None)
 
-and funcParamNamesTuple env : Typed.Expr.valuesExpr -> string list option = function
+and funcParamNamesTuple env : Typed.Expr.tuple -> string list option = function
   | { components; type' = _ } ->
     Some
       (components
@@ -265,15 +265,15 @@ let rec explicitizeArray paramNamesEnv array
     let%map body = explicitizeArray extendedParamNamesEnv body in
     E.Map { body; args = [ { binding; value } ]; frameShape = []; type' }
   | T.Primitive { name; type' } -> return (E.Primitive { name; type' })
-  | T.ValuesExpr { components; type' } ->
+  | T.Tuple { components; type' } ->
     let%map components =
       components 
       |> List.map ~f:(explicitizeArray paramNamesEnv)  
       |> ExplicitState.all
     in
-    E.ValuesExpr { components; type' }
-  | T.ValuesDeref { expr; position; type' } ->
-    let%map expr = explicitizeArray paramNamesEnv expr
+    E.Tuple { components; type' }
+  | T.TupleDeref { tuple; position; type' } ->
+    let%map expr = explicitizeArray paramNamesEnv tuple
     and mapArg = ExplicitState.createId "tupleDerefMapArg" in
     let exprType = E.arrayType expr in
     let tupleType =
@@ -288,7 +288,7 @@ let rec explicitizeArray paramNamesEnv array
     in
     E.Map
       { body =
-          E.ValuesDeref
+          E.TupleDeref
             { expr = E.Ref { id = mapArg; type' = tupleType }
             ; position
             ; type' = atomType

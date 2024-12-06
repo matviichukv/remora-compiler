@@ -165,7 +165,7 @@ let rec getPossibleMemSourcesInMem (mem : Acorn.Mem.t)
          (Map.find env id |> Option.value ~default:(Set.empty (module Identifier)))
          (Set.singleton (module Identifier) id)
   | TupleDeref { tuple; index = _; type' = _ } -> getPossibleMemSourcesInMem tuple
-  | Values { elements; type' = _ } ->
+  | Tuple { elements; type' = _ } ->
     elements
     |> List.map ~f:getPossibleMemSourcesInMem
     |> State.all
@@ -433,7 +433,7 @@ let rec getPossibleMemSources
       |> State.all
       >>| Set.union_list (module Identifier)
     | TupleDeref { tuple; index = _; type' = _ } -> getPossibleMemSources tuple
-    | Values { elements; type' = _ } ->
+    | Tuple { elements; type' = _ } ->
       elements
       |> List.map ~f:getPossibleMemSources
       |> State.all
@@ -805,7 +805,7 @@ let rec allocRequest
           Let
             { args = [ { binding; value = expr } ]
             ; body =
-                Expr.Values
+                Expr.Tuple
                   { elements = List.map elements ~f:(fun e -> e.expr)
                   ; type' = typeAsTuple @@ Expr.type' expr
                   }
@@ -836,7 +836,7 @@ let rec allocRequest
       |> List.mapi ~f:(fun i (type', targetAddr) ->
         getMemForResult ~targetAddr type' [%string "%{name}.%{i#Int}"])
       |> all
-      >>| Mem.values
+      >>| Mem.tuple
   in
   let allocLoopBlock
     : type lInner seqOrPar exists.
@@ -918,7 +918,7 @@ let rec allocRequest
         in
         ( Some (TargetValues targets)
         , List.concat memArgs
-        , Mem.Values { elements = mapMems; type' } )
+        , Mem.Tuple { elements = mapMems; type' } )
     in
     let%bind mapResultsAddr, mapTargetAddrMemArgs, mapResultMemInterim =
       createTargetAddrMapArgs (List.nth_exn type' 0) (createMapTargetAddr mapTargetAddr)
@@ -1470,7 +1470,7 @@ let rec allocRequest
           in
           ( Some (TargetValues targets)
           , List.concat memArgs
-          , Mem.Values { elements = mapMems; type' } )
+          , Mem.Tuple { elements = mapMems; type' } )
       in
       let%bind mapResultTargetAddr, mapTargetAddrMemArgs, mapResultMemInterim =
         createTargetAddrMapArgs type' targetAddr
@@ -1647,7 +1647,7 @@ let rec allocRequest
     in
     unwrittenExprToAllocResult
     @@ Box { indices; body; type' = canonicalizeSigmaType type' }
-  | Values { elements; type' } ->
+  | Tuple { elements; type' } ->
     let elementsAndTargetAddrs =
       match targetAddr with
       | None -> List.map elements ~f:(fun element -> element, None)
@@ -1662,9 +1662,9 @@ let rec allocRequest
       |> all
     in
     (* Write is ensured because the elements were directly written to the target addrs *)
-    (* EnsureWrite.mark @@ Values { elements; type' } *)
+    (* EnsureWrite.mark @@ Tuple { elements; type' } *)
     { expr =
-        Values
+        Tuple
           { elements = List.map elements ~f:(fun r -> r.expr)
           ; type' = canonicalizeTupleType type'
           }

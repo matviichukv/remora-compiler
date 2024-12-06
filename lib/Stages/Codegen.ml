@@ -625,7 +625,7 @@ let rec getInnerAllocatedBlocks : type c d. (d, c) Acorn.Expr.t -> int = functio
   | StaticArrayInit {elements; type' = _} ->
     List.length elements (* Each element is a literal *)
   | Literal _ -> 1
-  | Values { elements; type' = _ } ->
+  | Tuple { elements; type' = _ } ->
     elements
     |> List.map ~f:(fun e -> getInnerAllocatedBlocks e)
     |> List.reduce ~f:Int.max
@@ -674,10 +674,10 @@ let rec genMem : store:bool -> Mem.t -> (C.expr, _) GenState.u =
   let storeIfRequested ~name e = if store then GenState.storeExpr ~name e else return e in
   match expr with
   | Ref { id; type' = _ } -> return @@ Cx.refId id
-  | Values { elements; type' } ->
+  | Tuple { elements; type' } ->
     let%bind elements = elements |> List.map ~f:(genMem ~store) |> GenState.all in
     let%bind type' = genType ~wrapInPtr:true type' in
-    storeIfRequested ~name:"memValues" @@ Cx.initStruct type' elements
+    storeIfRequested ~name:"memTuple" @@ Cx.initStruct type' elements
   | TupleDeref { tuple; index; type' = _ } ->
     let%map tuple = genMem ~store tuple in
     Cx.(tuple %. tupleFieldName index)
@@ -1388,12 +1388,12 @@ and genExpr
   | _, TupleDeref { tuple; index; type' = _ } ->
     let%map tuple = genExpr ~hostOrDevice ~store tuple in
     Cx.(tuple %. tupleFieldName index)
-  | _, Values { elements; type' } ->
+  | _, Tuple { elements; type' } ->
     let%bind elements =
       elements |> List.map ~f:(genExpr ~hostOrDevice ~store:false) |> GenState.all
     in
     let%bind type' = genType (Tuple type') in
-    storeIfRequested ~name:"values" @@ Cx.initStruct type' elements
+    storeIfRequested ~name:"tuple" @@ Cx.initStruct type' elements
   | _, Ref { id; type' = _ } -> return @@ Cx.(refId id)
   | _, BoxValue { box; type' = _ } ->
     let%bind box = genExpr ~hostOrDevice ~store box in

@@ -330,7 +330,7 @@ let rec reduceTuplesInExpr (request : TupleRequest.t) expr =
                  | Type.Sigma { parameters = _; body } -> body
                  | _ -> raise @@ Unimplemented.Error "Expected collection type")
              in
-             let tuple = Expr.values elements in
+             let tuple = Expr.tuple elements in
              let zippedTuple =
                Expr.Zip
                  { zipArg = tuple
@@ -489,13 +489,13 @@ let rec reduceTuplesInExpr (request : TupleRequest.t) expr =
     in
     let type' = reduceTuplesType Whole type' in
     Expr.ScalarPrimitive { op; args; type' }
-  | Values { elements; type' } ->
+  | Tuple { elements; type' } ->
     (match request with
      | Whole ->
        let%map elements =
          elements |> List.map ~f:(reduceTuplesInExpr Whole) |> ReduceTupleState.all
        in
-       Expr.Values { elements; type' }
+       Expr.Tuple { elements; type' }
      | Element { i; rest } ->
        (* DISCARD!!! *)
        let value = List.nth_exn elements i in
@@ -519,7 +519,7 @@ let rec reduceTuplesInExpr (request : TupleRequest.t) expr =
          then ReduceTupleState.markDrop ()
          else return ()
        in
-       Expr.Values { elements; type' }
+       Expr.Tuple { elements; type' }
      | Collection _ ->
        raise (TupleRequest.unexpected ~actual:request ~expected:"tuple" ~at:"8"))
   | BoxValue { box; type' } ->
@@ -767,7 +767,7 @@ let rec reduceTuplesInExpr (request : TupleRequest.t) expr =
         Expr.let'
           ~args:[ { binding = blockBinding; value = block } ]
           ~body:
-            (Expr.values
+            (Expr.tuple
                [ mapWrapper @@ Expr.tupleDeref ~tuple:blockRef ~index:0
                ; consumerWrapper @@ Expr.tupleDeref ~tuple:blockRef ~index:1
                ])
@@ -790,7 +790,7 @@ let rec reduceTuplesInExpr (request : TupleRequest.t) expr =
           ~args:[ { binding = consumerBinding; value = consumerValue } ]
           ~body:(consumerWrapper consumerRef)
       in
-      let wrapperForUnit _ ~mapWrapper:_ ~consumerWrapper:_ = return @@ Expr.values [] in
+      let wrapperForUnit _ ~mapWrapper:_ ~consumerWrapper:_ = return @@ Expr.tuple [] in
       match request with
       | Whole -> TupleRequest.Whole, TupleRequest.Whole, wrapperForPair
       | Element { i = 0; rest = mapRequest } ->
@@ -936,7 +936,7 @@ let rec reduceTuplesInExpr (request : TupleRequest.t) expr =
                 getType nestCount @@ Expr.type' value)
             in
             Expr.Zip
-              { zipArg = Expr.values values
+              { zipArg = Expr.tuple values
               ; nestCount
               ; type' = typeWrapper @@ Type.Tuple types
               }
@@ -985,7 +985,7 @@ let rec reduceTuplesInExpr (request : TupleRequest.t) expr =
             extractors
             |> List.mapi ~f:(fun i extractor ->
               extractor @@ Expr.tupleDeref ~tuple:mapResult ~index:i)
-            |> Expr.values
+            |> Expr.tuple
           in
           resultIdsAndRequest, mapWrapper
         | Collection _ ->

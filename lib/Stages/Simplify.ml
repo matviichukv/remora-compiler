@@ -84,7 +84,7 @@ let rec nonComputational : Expr.t -> bool = function
       | CharacterLiteral _
       | BooleanLiteral _
       | StringLiteral _ ) -> true
-  | Values values -> List.for_all values.elements ~f:nonComputational
+  | Tuple tuple -> List.for_all tuple.elements ~f:nonComputational
   | TupleDeref { tuple; index = _; type' = _ } -> nonComputational tuple
   | Let _ -> false
   | LoopBlock _ -> false
@@ -195,7 +195,7 @@ let getCounts =
       Counts.merge (bodyCounts :: indexCounts)
     | ScalarPrimitive { op = _; args; type' = _ } ->
       args |> List.map ~f:(getCountsExpr inLoop) |> Counts.merge
-    | Values { elements; type' = _ } ->
+    | Tuple { elements; type' = _ } ->
       elements |> List.map ~f:(getCountsExpr inLoop) |> Counts.merge
     | TupleDeref { tuple; index = _; type' = _ } -> getCountsExpr inLoop tuple
     | ContiguousSubArray { arrayArg; indexArg; originalShape; resultShape; type' = _ } ->
@@ -341,11 +341,11 @@ let rec substituteExpr subVar subValue : Expr.t -> Expr.t option =
   | ScalarPrimitive { op; args; type' } ->
     let%map args = args |> List.map ~f:(substituteExpr subVar subValue) |> Option.all in
     ScalarPrimitive { op; args; type' }
-  | Values { elements; type' } ->
+  | Tuple { elements; type' } ->
     let%map elements =
       elements |> List.map ~f:(substituteExpr subVar subValue) |> Option.all
     in
-    Values { elements; type' }
+    Tuple { elements; type' }
   | TupleDeref { tuple; index; type' } ->
     let%map tuple = substituteExpr subVar subValue tuple in
     TupleDeref { tuple; index; type' }
@@ -606,9 +606,9 @@ let rec optimize : Expr.t -> Expr.t =
     let args = List.map args ~f:optimize in
     (* Do constant folding: *)
     constantFold op args type'
-  | Values { elements; type' } ->
+  | Tuple { elements; type' } ->
     let elements = List.map elements ~f:optimize in
-    let values = Expr.Values { elements; type' } in
+    let tuple = Expr.Tuple { elements; type' } in
     (match elements with
      | TupleDeref { tuple = Ref ref; index = 0; type' = _ } :: _ ->
        (* ex: (a.0, a.1, a.2) => a *)
@@ -626,12 +626,12 @@ let rec optimize : Expr.t -> Expr.t =
              Identifier.equal ref.id eRef.id && eI = expectedIndex
            | _ -> false)
        in
-       if sizesMatch && allSequentialDerefs then Ref ref else values
-     | _ -> values)
+       if sizesMatch && allSequentialDerefs then Ref ref else tuple
+     | _ -> tuple)
   | TupleDeref { tuple; index; type' } ->
     let tuple = optimize tuple in
     (match tuple with
-     | Values { elements; type' = _ } -> List.nth_exn elements index
+     | Tuple { elements; type' = _ } -> List.nth_exn elements index
      | _ -> TupleDeref { tuple; index; type' })
   | Zip { zipArg; nestCount = 0; type' = _ } -> optimize zipArg
   | Zip { zipArg; nestCount; type' } ->
@@ -839,9 +839,9 @@ let rec hoistDeclarations : Expr.t -> Expr.t * hoisting list = function
   | ScalarPrimitive { op; args; type' } ->
     let args, hoistings = hoistDeclarationsMap args ~f:hoistDeclarations in
     ScalarPrimitive { op; args; type' }, hoistings
-  | Values { elements; type' } ->
+  | Tuple { elements; type' } ->
     let elements, hoistings = hoistDeclarationsMap elements ~f:hoistDeclarations in
-    Values { elements; type' }, hoistings
+    Tuple { elements; type' }, hoistings
   | TupleDeref { tuple; index; type' } ->
     let tuple, hoistings = hoistDeclarations tuple in
     TupleDeref { tuple; index; type' }, hoistings
@@ -1068,11 +1068,11 @@ let rec hoistExpressions loopBarrier (expr : Expr.t)
         hoistExpressionsMap args ~f:(hoistExpressions loopBarrier)
       in
       Expr.ScalarPrimitive { op; args; type' }, hoistings
-    | Values { elements; type' } ->
+    | Tuple { elements; type' } ->
       let%map elements, hoistings =
         hoistExpressionsMap elements ~f:(hoistExpressions loopBarrier)
       in
-      Expr.Values { elements; type' }, hoistings
+      Expr.Tuple { elements; type' }, hoistings
     | TupleDeref { tuple; index; type' } ->
       let%map tuple, hoistings = hoistExpressions loopBarrier tuple in
       Expr.TupleDeref { tuple; index; type' }, hoistings

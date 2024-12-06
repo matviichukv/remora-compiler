@@ -77,7 +77,7 @@ module Captures = struct
     | LoopKernel _ -> []
     | Box { type' = _; indices = _; body } -> getExprLetBindings body
     | Literal _ -> []
-    | Values { elements; type' = _ } ->
+    | Tuple { elements; type' = _ } ->
       List.join (List.map ~f:getExprLetBindings elements)
     | ScalarPrimitive _ -> []
     | TupleDeref { tuple; index = _; type' = _ } -> getExprLetBindings tuple
@@ -124,7 +124,7 @@ module Captures = struct
   let rec getInMem : Acorn.Mem.t -> t = function
     | Ref ref -> of_memRef ref
     | TupleDeref { tuple; index = _; type' = _ } -> getInMem tuple
-    | Values { elements; type' = _ } -> getList elements ~f:getInMem
+    | Tuple { elements; type' = _ } -> getList elements ~f:getInMem
     | Index { mem; offset; type' } -> getInMem mem + getInDim offset + getInType type'
   ;;
 
@@ -285,7 +285,7 @@ module Captures = struct
     | Box { indices; body; type' = _ } ->
       getList indices ~f:(fun { expr; index } -> getInExpr expr + getInIndex index)
       + getInExpr body
-    | Values { elements; type' = _ } -> getList elements ~f:getInExpr
+    | Tuple { elements; type' = _ } -> getList elements ~f:getInExpr
     | ScalarPrimitive { op = _; args; type' = _ } -> getList args ~f:getInExpr
     | TupleDeref { tuple; index = _; type' = _ } -> getInExpr tuple
     | ContiguousSubArray { arrayArg; indexArg; originalShape; resultShape; type' } ->
@@ -603,8 +603,8 @@ let rec annotateExpr : type l. l Expr.sansCaptures -> l Expr.withCaptures = func
       ; body = annotateExpr body
       ; type'
       }
-  | Values { elements; type' } ->
-    Values { elements = List.map elements ~f:annotateExpr; type' }
+  | Tuple { elements; type' } ->
+    Tuple { elements = List.map elements ~f:annotateExpr; type' }
   | ScalarPrimitive { op; args; type' } ->
     ScalarPrimitive { op; args = List.map args ~f:annotateExpr; type' }
   | TupleDeref { tuple; index; type' } ->

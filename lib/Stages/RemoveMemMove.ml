@@ -95,8 +95,8 @@ let constructDataFlowMap (expr : captures Acorn.t) =
         | ( Acorn.Mem.TupleDeref { tuple = tupleHost; index = indexHost; type' = _ }
           , Acorn.Mem.TupleDeref { tuple = tupleDev; index = indexDev; type' = _ } ) ->
           matcher tupleHost tupleDev ((indexHost, indexDev) :: derefStack)
-        | ( Acorn.Mem.Values { elements = elementsHost; type' = _ }
-          , Acorn.Mem.Values { elements = elementsDev; type' = _ } ) ->
+        | ( Acorn.Mem.Tuple { elements = elementsHost; type' = _ }
+          , Acorn.Mem.Tuple { elements = elementsDev; type' = _ } ) ->
           (match derefStack with
            | [] ->
              List.zip_exn elementsHost elementsDev
@@ -277,13 +277,13 @@ let constructDataFlowMap (expr : captures Acorn.t) =
     | Box { indices = _; body; type' = _ } -> constructDataFlowMap body map
     | StaticArrayInit _ -> map, DFComputedValue
     | Literal _ -> map, DFComputedValue
-    | Values { elements; type' = _ } ->
-      let values, map =
+    | Tuple { elements; type' = _ } ->
+      let tuple, map =
         List.fold_right elements ~init:([], map) ~f:(fun e (vals, map) ->
           let map, value = constructDataFlowMap e map in
           value :: vals, map)
       in
-      map, DFTuple values
+      map, DFTuple tuple
     | ScalarPrimitive { op = _; args; type' = _ } ->
       let value = DFComputedValue in
       let map =
@@ -383,13 +383,13 @@ let constructDataFlowMap (expr : captures Acorn.t) =
     | Acorn.Mem.TupleDeref { tuple; index; type' = _ } ->
       let tuple = memToDF tuple in
       DFDeref { index; tuple }
-    | Acorn.Mem.Values { elements; type' = _ } -> DFTuple (List.map elements ~f:memToDF)
+    | Acorn.Mem.Tuple { elements; type' = _ } -> DFTuple (List.map elements ~f:memToDF)
     | Acorn.Mem.Index { mem; offset = _; type' = _ } -> memToDF mem
   and memToDFCopy (mem : Acorn.Mem.t) map ?(f = fun e -> e) (targetMemDf : dfValue) =
     match mem with
     | Acorn.Mem.Ref { id; type' = _ } ->
       Map.update map id ~f:(function _ -> DFDeviceToHostCopy (f targetMemDf))
-    | Acorn.Mem.Values { elements; type' = _ } ->
+    | Acorn.Mem.Tuple { elements; type' = _ } ->
       List.foldi elements ~init:map ~f:(fun index map e ->
         memToDFCopy e map ?f:(Some (fun tuple -> DFDeref { tuple; index })) targetMemDf)
     | Acorn.Mem.Index { mem; offset = _; type' = _ } ->
@@ -503,7 +503,7 @@ let rec constructReplaceMap
   | Box { indices = _; body; type' = _ } -> constructReplaceMap body dfMap
   | StaticArrayInit _ -> emptyMap
   | Literal _ -> emptyMap
-  | Values { elements; type' = _ } ->
+  | Tuple { elements; type' = _ } ->
     let elementMaps = List.map elements ~f:(fun e -> constructReplaceMap e dfMap) in
     List.fold
       elementMaps
@@ -768,7 +768,7 @@ and followChain id dfMap : Acorn.Mem.t option =
               | Done _ -> true)
          then
            Done
-             (Acorn.Mem.values
+             (Acorn.Mem.tuple
                 (List.filter_map elementsResult ~f:(function
                   | NothingFound -> None
                   | NotDone _ -> None
@@ -984,11 +984,11 @@ let rec removeHostToDevCopy
     Box { indices; body; type' }
   | StaticArrayInit stArrInitVals -> StaticArrayInit stArrInitVals
   | Literal l -> Literal l
-  | Values { elements; type' } ->
+  | Tuple { elements; type' } ->
     let elements =
       List.map elements ~f:(fun e -> removeHostToDevCopy e replaceMap exprToMemRefs)
     in
-    Values { elements; type' }
+    Tuple { elements; type' }
   | ScalarPrimitive { op; args; type' } ->
     let args =
       List.map args ~f:(fun a -> removeHostToDevCopy a replaceMap exprToMemRefs)
@@ -1247,7 +1247,7 @@ and findAllCapturesInMem (mem : Acorn.Mem.t) : Acorn.Mem.ref list =
   match mem with
   | Acorn.Mem.Ref ref -> [ ref ]
   | Acorn.Mem.TupleDeref { tuple; index = _; type' = _ } -> findAllCapturesInMem tuple
-  | Acorn.Mem.Values { elements; type' = _ } ->
+  | Acorn.Mem.Tuple { elements; type' = _ } ->
     List.concat_map elements ~f:findAllCapturesInMem
   | Acorn.Mem.Index { mem; offset = _; type' = _ } -> findAllCapturesInMem mem
 ;;
@@ -1289,7 +1289,7 @@ let rec findUses : type l. (l, captures) t -> (Identifier.t, _) Set.t = function
   | Box { indices = _; body; type' = _ } -> findUses body
   | StaticArrayInit _ -> Set.empty (module Identifier)
   | Literal _ -> Set.empty (module Identifier)
-  | Values { elements; type' = _ } ->
+  | Tuple { elements; type' = _ } ->
     let uses = List.map elements ~f:findUses in
     Set.union_list (module Identifier) uses
   | ScalarPrimitive { op = _; args; type' = _ } ->
@@ -1535,7 +1535,7 @@ let rec removeReturnValue : type l. (l, captures) t -> (l, _) statement option =
       ; threads
       } ->
     let mapResultMemFinal =
-      Acorn.Mem.Values { elements = []; type' = Acorn.Type.Tuple [] }
+      Acorn.Mem.Tuple { elements = []; type' = Acorn.Type.Tuple [] }
     in
     let consumer = Maybe.map consumer ~f:removeReturnValueConsumer in
     let type' = [ Acorn.Type.Tuple []; Acorn.Type.Tuple [] ] in
@@ -1581,7 +1581,7 @@ let rec removeReturnValue : type l. (l, captures) t -> (l, _) statement option =
      | Some v -> Some v)
   | StaticArrayInit _ -> None
   | Literal _ -> None
-  | Values { elements; type' = _ } ->
+  | Tuple { elements; type' = _ } ->
     let elements =
       elements
       |> List.map ~f:(fun e -> removeReturnValue e)
@@ -1632,7 +1632,7 @@ and removeReturnValueStatement : type l. (l, _) statement -> (l, _) statement =
       ; threads
       } ->
     let mapResultMemHostFinal =
-      Acorn.Mem.Values { elements = []; type' = Acorn.Type.Tuple [] }
+      Acorn.Mem.Tuple { elements = []; type' = Acorn.Type.Tuple [] }
     in
     let kernel = { label; map; mapResultMemDeviceInterim; mapResultMemHostFinal } in
     MapKernel { kernel; captures; blocks; threads }
@@ -1676,7 +1676,7 @@ and removeReturnValueConsumer
       ; scanResultMemDeviceInterim
       } ->
     let scanResultMemFinal =
-      Acorn.Mem.Values { elements = []; type' = Acorn.Type.Tuple [] }
+      Acorn.Mem.Tuple { elements = []; type' = Acorn.Type.Tuple [] }
     in
     let scan = { arg; zero; body; indexMode; d; scanResultMemFinal; type' } in
     ScanPar { scan; scanResultMemDeviceInterim }
@@ -1694,14 +1694,14 @@ and getNewFinalMem (hostMem : Acorn.Mem.t) (devMem : Acorn.Mem.t) ~memId
   match hostMem, devMem with
   | Ref hostId, Ref devId ->
     if Identifier.equal memId devId.id then None else Some (Ref hostId)
-  | Values hostVals, Values devVals
+  | Tuple hostVals, Tuple devVals
     when List.length hostVals.elements = List.length devVals.elements ->
     let newElements =
       List.map2_exn hostVals.elements devVals.elements ~f:(getNewFinalMem ~memId)
     in
-    if List.for_all newElements ~f:Option.is_none then None else Some (Values hostVals)
+    if List.for_all newElements ~f:Option.is_none then None else Some (Tuple hostVals)
   | TupleDeref hostDeref, TupleDeref devDeref when hostDeref.index = devDeref.index ->
-    (* Values case should reconstruct the TupleDeref because *)
+    (* Tuple case should reconstruct the TupleDeref because *)
     let finalMem = getNewFinalMem hostDeref.tuple devDeref.tuple ~memId in
     (match finalMem with
      | None -> None
@@ -1801,9 +1801,9 @@ let rec removeDevToHostCopy : type l. (l, _) t -> replaceMap:(_, _, _) Map.t -> 
     Box { indices; body; type' }
   | StaticArrayInit stArrInitVals -> StaticArrayInit stArrInitVals  
   | Literal l -> Literal l
-  | Values { elements; type' } ->
+  | Tuple { elements; type' } ->
     let elements = List.map elements ~f:(removeDevToHostCopy ~replaceMap) in
-    Values { elements; type' }
+    Tuple { elements; type' }
   | ScalarPrimitive { op; args; type' } ->
     let args = List.map args ~f:(removeDevToHostCopy ~replaceMap) in
     ScalarPrimitive { args; op; type' }

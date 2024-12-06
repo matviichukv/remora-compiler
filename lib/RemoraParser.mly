@@ -42,7 +42,7 @@ let makeAnnSource elem source = Source.{ elem; source }
 %token BOX
 %token BOXES
 %token UNBOX
-%token VALUES
+%token TUPLE
 %token <int> TUPLE_DEREF
 %token T_APP
 %token I_APP
@@ -53,7 +53,7 @@ let makeAnnSource elem source = Source.{ elem; source }
 %token TYPE_FORALL
 %token TYPE_PI
 %token TYPE_SIGMA
-%token TYPE_VALUES
+%token TYPE_TUPLE
 %token RIGHT_ARROW
 %token PLUS
 %token APPEND
@@ -151,10 +151,10 @@ expr:
       let indexBindings = makeAnn indexBindings $loc(indexBindings) in
       makeAnn (Expr.Unbox { valueBinding; indexBindings; box; body }) $loc
     }
-  | LEFT_PAREN; VALUES; elements = ann_list(expr); RIGHT_PAREN
-    { makeAnn (Expr.ValuesExpr elements) $loc }
+  | LEFT_PAREN; TUPLE; elements = ann_list(expr); RIGHT_PAREN
+    { makeAnn (Expr.Tuple elements) $loc }
   | LEFT_PAREN; position = TUPLE_DEREF; e = expr; RIGHT_PAREN
-    { makeAnn (Expr.ValuesDeref { expr = e; position }) $loc }
+    { makeAnn (Expr.TupleDeref { expr = e; position }) $loc }
   | e = expr; LEFT_CURLY; typeArgs = list(tpe); RIGHT_CURLY;
               LEFT_CURLY; indexArgs = list(index); RIGHT_CURLY
   | e = expr; LEFT_CURLY; typeArgs = list(tpe); BAR
@@ -255,7 +255,7 @@ tpe:
   | LEFT_PAREN; TYPE_SIGMA; LEFT_PAREN; parameters = ann_list(index_binding); RIGHT_PAREN;
                                         body = tpe; RIGHT_PAREN
     { makeAnn (Type.Sigma (Type.{ parameters; body })) $loc }
-  | LEFT_PAREN; TYPE_VALUES; tuple = ann_list(tpe); RIGHT_PAREN
+  | LEFT_PAREN; TYPE_TUPLE; tuple = ann_list(tpe); RIGHT_PAREN
     { makeAnn (Type.Tuple tuple) $loc }
   | LEFT_SQUARE; element = tpe; shapeElements = list(index); RIGHT_SQUARE
     { let shape = makeAnn (Index.Slice shapeElements) $loc(shapeElements) in
@@ -360,7 +360,7 @@ keyword_as_ref:
   | TYPE_SIGMA  { makeAnn (Expr.Ref "Sigma") $loc }
   | TYPE_ARR    { makeAnn (Expr.Ref "Arr") $loc }
   | TYPE_FORALL { makeAnn (Expr.Ref "Forall") $loc }
-  | TYPE_VALUES { makeAnn (Expr.Ref "Values") $loc }
+  | TYPE_TUPLE  { makeAnn (Expr.Ref "Tuple") $loc }
   | SHAPE       { makeAnn (Expr.Ref "shape") $loc }
 
 sym:
