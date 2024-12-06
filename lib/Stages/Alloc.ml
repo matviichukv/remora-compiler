@@ -1265,25 +1265,8 @@ let rec allocRequest
     let argBindings =
       args |> List.map ~f:(fun arg -> arg.binding) |> Set.of_list (module Identifier)
     in
-    (* Helper, necessary to decide if and how to allocate statically *)
-    let computeSizeWhenShapeKnown (type' : Acorn.Type.t) =
+    let isTypeStaticallyDefinable (type' : Acorn.Type.t) =
       match type' with
-      | Array {element = _; shape} -> 
-        shape 
-        |> NeList.map ~f:(fun shapeElement ->
-          match shapeElement with
-          | Index.Add { const; refs = _; lens = _ } -> const
-          | Index.ShapeRef _ -> raise Unreachable.default)
-        |> NeList.fold_left ~init:1 ~f:(fun acc a -> acc * a)
-      | _ -> raise Unreachable.default
-    in
-    (* We separate which args will be allocated statically, and which - dynamically *)
-    let staticArgs, dynamicArgs = 
-      List.partition_tf args ~f:(fun { binding = _; value } ->
-        match value with
-        | Frame { elements = _; dimension = _; type' } -> (
-          let type' = canonicalizeType type' in
-          match type' with
           | Array {element = _; shape} -> 
             let isShapeKnown = 
               NeList.for_all shape ~f:(fun shapeElement ->
@@ -1291,15 +1274,25 @@ let rec allocRequest
                 | Index.Add { const = _; refs; lens } -> Map.is_empty refs && Map.is_empty lens
                 | Index.ShapeRef _ -> false)
             in
-            (* 1024 is a magic number; we don't want to store too much on the stack*)
-            isShapeKnown && (computeSizeWhenShapeKnown type') < 1024 
-          | _ -> false)
-        | _ -> false)
+            let size =
+              shape 
+              |> NeList.map ~f:(fun shapeElement ->
+                match shapeElement with
+                | Index.Add { const; refs = _; lens = _ } -> const
+                | Index.ShapeRef _ -> raise Unreachable.default)
+              |> NeList.fold_left ~init:1 ~f:(fun acc a -> acc * a)
+            in
+            (* 1024 is a magic number; we don't want to store too much on the stack *)
+            (* Can be parametrized based on location, perhaps? *)
+            isShapeKnown && size < 1024 
+          | _ -> false
     in
-    let staticAllocArgs = 
-      List.map staticArgs ~f:(fun { binding; value } ->
+    (* Separate out args that can be statically initalized, convert them into Acorn.Expr *)
+    (* The rest will be initialized through allocRequest, so keep them as Corn.Expr*)
+    let staticInitArgs, dynamicInitArgsPrealloc =
+      List.partition_map args ~f:(fun { binding; value } ->
         match value with
-        | Frame { elements; dimension = _; type'} -> (
+        | Frame { elements ; dimension = _; type' } -> (
           let acornType = canonicalizeType type' in
           (* Initialize static args if frame consists only of literals *)
           let rec getLitListForArrInit (elements' : l Corn.Expr.t list) = 
@@ -1317,66 +1310,54 @@ let rec allocRequest
               ~finish:(fun acc -> acc)
           in
           let litListForArrInit = List.rev (getLitListForArrInit elements) in
-          Expr.{ 
-            binding
-          ; value = 
-            Expr.StaticArrayInit {
-              elements = litListForArrInit
-            ; type' = acornType }})
-        | _ -> raise @@ Unreachable.Error "expected frame expression")
+          if 
+            (isTypeStaticallyDefinable acornType && not (List.is_empty litListForArrInit))
+          then 
+            First Expr.
+            { binding
+            ; value = Expr.StaticArrayInit { elements = litListForArrInit; type' = acornType}}
+          else 
+            Second Corn.Expr.{ binding; value })
+        | _ -> Second Corn.Expr.{ binding; value })
     in
-    let dynamicInitStaticLetArgs, staticInitStaticAllocArgs =
-      List.zip_exn staticArgs staticAllocArgs
-      |> List.partition_map 
-        ~f:(fun (letArg, staticAllocArg) -> 
-          match staticAllocArg.value with 
-          | StaticArrayInit {elements; type' = _} -> 
-            if List.is_empty elements
-            then First letArg
-            else Second staticAllocArg
-          | _ -> raise Unreachable.default)
-    in
-    let allocateFrames (argList : l Corn.Expr.letArg list) =
-      argList
+    let dynamicInitArgs =
+      dynamicInitArgsPrealloc
       |> List.map ~f:(fun { binding; value } ->
         let%map value = allocExpr ~writeToAddr:None value in
         Expr.{ binding; value })
       |> all
     in
-    let mallocArgs = allocateFrames dynamicArgs in
-    let dynamicInitStaticArgs = allocateFrames dynamicInitStaticLetArgs in
-    (* let letArgs = allocateFrames args in *)
     let%bind body =
+      (* TODO: Accomodate for static allocation in avoidCaptures? Probably not worth it before rewrite *)
       avoidCaptures ~capturesToAvoid:argBindings @@ allocExpr ~writeToAddr:targetAddr body
     in
     let%map declaredLet =
       let open CompilerState in
       let open Let_syntax in
-      (* let%bind _, allocs = letArgs in *)
-      let%bind letArgs1, mallocArgAllocs = mallocArgs in
-      let%bind letArgs2, dynamicInitStaticAllocArgs = dynamicInitStaticArgs in    
+      let%bind letArgs, mallocArgsAllocs = dynamicInitArgs in
+      let staticDefDynamicInitArgs, mallocMemArgs = 
+         List.partition_map mallocArgsAllocs ~f:(fun allocation ->
+          let acornType = allocation.type' in
+          let binding = allocation.binding in
+          if 
+            isTypeStaticallyDefinable acornType
+          then
+            First Expr.
+            { binding
+            ; value = Expr.StaticArrayInit { elements = []; type' = acornType}}
+          else
+            Second (AllocAcc.allocationToMallocMemArg allocation))
+      in  
       let staticAllocLetArgs =
-        staticInitStaticAllocArgs 
-        @ List.map dynamicInitStaticAllocArgs ~f:(
-          fun { binding; mallocLoc = _; uses = _; type' = acornType } ->  
-          Expr.
-          { binding
-          ; value = Expr.StaticArrayInit { elements = []; type' = acornType}})
+        staticInitArgs @ staticDefDynamicInitArgs
       in
-      (* Stdio.prerr_endline
-        (Printf.sprintf
-          "All allocs count: %s; Malloc allocs count : %s; DynInit allocs count: %s; Static allocs count: %s"
-          (Int.to_string (List.length allocs))
-          (Int.to_string (List.length mallocArgAllocs))
-          (Int.to_string (List.length dynamicInitStaticAllocArgs))
-          (Int.to_string (List.length staticAllocLetArgs))); *)
-      let body = Acorn.Expr.Let { args = (letArgs1 @ letArgs2); body } in
+      let body = Acorn.Expr.Let { args = letArgs; body } in
       let result =
-        match staticAllocLetArgs, mallocArgAllocs with
+        match staticAllocLetArgs, mallocMemArgs with
         | [], [] -> body
         | [], _ ->
           Acorn.Expr.MallocLet
-          { memArgs = List.map mallocArgAllocs ~f:AllocAcc.allocationToMallocMemArg; body }
+          { memArgs = mallocMemArgs; body }
         | _, [] -> 
           Acorn.Expr.StaticAllocLet
             { args = staticAllocLetArgs; body }
@@ -1385,7 +1366,7 @@ let rec allocRequest
             { args = staticAllocLetArgs
             ; body = 
               Acorn.Expr.MallocLet
-              { memArgs = List.map mallocArgAllocs ~f:AllocAcc.allocationToMallocMemArg; body }}
+              { memArgs = mallocMemArgs; body }}
       in
       return (result, [])
     in
