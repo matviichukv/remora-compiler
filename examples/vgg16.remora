@@ -1,11 +1,11 @@
 ;; ---------------------------- UTILITIES ---------------------------------------------
 ;; @s is the shape of the array, l is length of index
 ;;(define (indices-of{| @s l}) : [int @s l])
-;; (define (indices-of/2{| d1 d2}): [int d1 d2 2]
-;;   (let [d1-val (reify-dimension d2)]
-;;     ((fn ([id [int]]) [(/ id d1-val) (% id d1-val)]) iota{| [d1 d2]})))
-(define (indices-of/2{| d1 d2}) : [int d1 d2 2]
-  ((fn ([id1 [int]]) ((fn ([id2 [int]]) [id1 id2]) iota{|[d2]})) iota{|[d1]}))
+(define (indices-of/2{| d1 d2}): [int d1 d2 2]
+  (let [d1-val (reify-dimension d2)]
+    ((fn ([id [int]]) [(/ id d1-val) (% id d1-val)]) iota{| [d1 d2]})))
+;; (define (indices-of/2{| d1 d2}) : [int d1 d2 2]
+;;   ((fn ([id1 [int]]) ((fn ([id2 [int]]) [id1 id2]) iota{|[d2]})) iota{|[d1]}))
 
 ;; (define (foo {t @t2 t3} {d1 d2 @s}
 ;;              ([arr [t d1 @s]] [bar [@t2 d1 d2]] -> [t3 d2 @s])) ...)
@@ -51,7 +51,7 @@
 ;; 1. axis is a permutations of numbers [0,4), no duplicates
 (define (transpose/4{t | in1 in2 in3 in4 out1 out2 out3 out4}
           [arr [t in1 in2 in3 in4]]
-          [axis [int 4]])
+          [axis [int 4]]) : [t out1 out2 out3 out4]
   (define idxs (indices-of/4{| in1 in2 in3 in4}))
   (define transposed-idxs (scatter{int | 4 4 []} idxs axis))
   (index{t | [in1 in2 in3 in4] [] 4} arr transposed-idxs))
