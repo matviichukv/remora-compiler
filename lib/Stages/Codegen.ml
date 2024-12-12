@@ -436,6 +436,12 @@ let genShapeSize shape =
   List.fold shape ~init:Cx.(intLit 1) ~f:(fun acc se -> Cx.(acc * genShapeElementSize se))
 ;;
 
+let genIndexAllocSize (a : Acorn.Expr.indexAlloc) : C.expr =
+  match a with
+  | Expr.Static i -> Cx.intLit i
+  | Expr.Dynamic s -> genShapeElementSize s
+;;
+
 let genShapeDimCount shape =
   let knownDimCount, unknownDimCounts =
     List.fold shape ~init:(0, []) ~f:(fun (knownSoFar, unknownSoFar) shapeElement ->
@@ -584,7 +590,11 @@ let genMalloc
   if store then GenState.storeExpr ~name:"mem" mem else return mem
 ;;
 
-let rec getInnerAllocatedBlocks : type c d. (d, c) Acorn.Expr.t -> int = function
+let cMaxFunc (a : C.expr) (b : C.expr) : C.expr =
+  Cx.ternary ~cond:Cx.(a <= b) ~then':b ~else':a
+;;
+
+let rec getInnerAllocatedBlocks : type c. (device, c) Acorn.Expr.t -> C.expr = function
   | LoopBlock lb ->
     let mapBodyInner = getInnerAllocatedBlocks lb.mapBody in
     (match lb.indexMode with
@@ -592,8 +602,17 @@ let rec getInnerAllocatedBlocks : type c d. (d, c) Acorn.Expr.t -> int = functio
      | Some indexMode ->
        (match indexMode.allocatedBlocks with
         | None -> mapBodyInner
-        | Some allocatedBlocks -> mapBodyInner * allocatedBlocks))
-  | Ref _ -> 1
+        | Some allocatedBlocks ->
+          (match mapBodyInner, genIndexAllocSize allocatedBlocks with
+           | Literal (Int64Literal a), Literal (Int32Literal b | Int64Literal b) ->
+             Literal (Int64Literal (a * b))
+           | Literal (Int32Literal a), Literal (Int64Literal b) ->
+             Literal (Int64Literal (a * b))
+           | Literal (Int32Literal a), Literal (Int32Literal b) ->
+             Literal (Int32Literal (a * b))
+           | a, b -> Cx.(a * b))
+          (* Cx.(mapBodyInner * genIndexAllocSize allocatedBlocks) *)))
+  | Ref _ -> Cx.intLit 1
   | BoxValue { box; type' = _ } -> getInnerAllocatedBlocks box
   | IndexLet { indexArgs; body; type' = _ } ->
     let argsRes =
@@ -602,68 +621,109 @@ let rec getInnerAllocatedBlocks : type c d. (d, c) Acorn.Expr.t -> int = functio
         match indexValue with
         | Runtime v -> getInnerAllocatedBlocks v
         | FromBox { box; i = _ } -> getInnerAllocatedBlocks box)
-      |> List.reduce ~f:Int.max
-      |> Option.value ~default:1
+      (* |> List.reduce ~f:cMaxFunc *)
+      (* |> Option.value ~default:(Cx.intLit 1) *)
     in
     let bodyRes = getInnerAllocatedBlocks body in
-    Int.max argsRes bodyRes
+    combineInnerAllocatedBlocks (bodyRes :: argsRes)
   | MallocLet { memArgs = _; body } -> getInnerAllocatedBlocks body
-  | ReifyDimensionIndex _ -> 1
-  | ShapeProd _ -> 1
-  | LoopKernel { kernel = _; captures = _; blocks; threads } -> blocks * threads
+  | ReifyDimensionIndex _ -> Cx.intLit 1
+  | ShapeProd _ -> Cx.intLit 1
+  (* | LoopKernel { kernel = _; captures = _; blocks; threads } -> *)
+  (*   Cx.(intLit blocks * intLit threads) *)
   | Let { args; body } ->
-    let bodyRes = getInnerAllocatedBlocks body in
-    let argsRes =
-      args
-      |> List.map ~f:(fun { binding = _; value } -> getInnerAllocatedBlocks value)
-      |> List.reduce ~f:Int.max
-      |> Option.value ~default:1
-    in
-    Int.max bodyRes argsRes
+    getInnerAllocatedBlocksList (body :: List.map args ~f:(fun a -> a.value))
+    (* let bodyRes = getInnerAllocatedBlocks body in *)
+    (* let argsRes = *)
+    (*   args *)
+    (*   |> List.map ~f:(fun { binding = _; value } -> getInnerAllocatedBlocks value) *)
+    (*   |> List.reduce ~f:cMaxFunc *)
+    (*   |> Option.value ~default:(Cx.intLit 1) *)
+    (* in *)
+    (* cMaxFunc bodyRes argsRes *)
   | Box { indices = _; type' = _; body } -> getInnerAllocatedBlocks body
-  | Literal _ -> 1
+  | Literal _ -> Cx.intLit 1
   | Values { elements; type' = _ } ->
-    elements
-    |> List.map ~f:(fun e -> getInnerAllocatedBlocks e)
-    |> List.reduce ~f:Int.max
-    |> Option.value ~default:1
+    getInnerAllocatedBlocksList elements
+    (* elements *)
+    (* |> List.map ~f:getInnerAllocatedBlocks *)
+    (* |> List.reduce ~f:cMaxFunc *)
+    (* |> Option.value ~default:(Cx.intLit 1) *)
   | ScalarPrimitive { op = _; args; type' = _ } ->
-    args
-    |> List.map ~f:getInnerAllocatedBlocks
-    |> List.reduce ~f:Int.max
-    |> Option.value ~default:1
+    getInnerAllocatedBlocksList args
+    (* args *)
+    (* |> List.map ~f:getInnerAllocatedBlocks *)
+    (* |> List.reduce ~f:cMaxFunc *)
+    (* |> Option.value ~default:(Cx.intLit 1) *)
   | TupleDeref { tuple; index = _; type' = _ } -> getInnerAllocatedBlocks tuple
   | ContiguousSubArray
       { arrayArg; indexArg; originalShape = _; resultShape = _; type' = _ } ->
-    Int.max (getInnerAllocatedBlocks arrayArg) (getInnerAllocatedBlocks indexArg)
-  | IfParallelismHitsCutoff _ -> 1
+    getInnerAllocatedBlocksList [ arrayArg; indexArg ]
+  (* cMaxFunc (getInnerAllocatedBlocks arrayArg) (getInnerAllocatedBlocks indexArg) *)
+  (* NOTE: this function is only called inside kernels to figure out indexing, *)
+  (* so we don't need to worry about  *)
+  (* | IfParallelismHitsCutoff _ -> raise Unreachable.default *)
   | Eseq { statement; expr; type' = _ } ->
-    Int.max (getInnerAllocatedBlocks expr) (getInnerAllocatedBlocksStmt statement)
-  | Getmem _ -> 1
+    combineInnerAllocatedBlocks
+      [ getInnerAllocatedBlocksStmt statement; getInnerAllocatedBlocks expr ]
+    (* cMaxFunc (getInnerAllocatedBlocks expr) (getInnerAllocatedBlocksStmt statement) *)
+  | Getmem _ -> Cx.intLit 1
 
-and getInnerAllocatedBlocksStmt : type c d. (d, c) Acorn.Expr.statement -> int = function
-  | Putmem _ -> 1
-  | MapKernel { kernel = _; captures = _; blocks; threads } -> blocks * threads
+and getInnerAllocatedBlocksStmt : type c. (device, c) Acorn.Expr.statement -> C.expr
+  = function
+  | Putmem _ -> Cx.intLit 1
+  (* | MapKernel { kernel = _; captures = _; blocks; threads } -> *)
+  (*   Cx.(intLit blocks * intLit threads) *)
   | ComputeForSideEffects e -> getInnerAllocatedBlocks e
   | Statements stmts ->
-    let res =
-      stmts |> List.map ~f:getInnerAllocatedBlocksStmt |> List.reduce ~f:Int.max
-    in
-    (match res with
-     | None -> 1
-     | Some m -> m)
+    stmts |> List.map ~f:getInnerAllocatedBlocksStmt |> combineInnerAllocatedBlocks
+    (* let res = *)
+    (* in *)
+    (* (match res with *)
+    (*  | None -> Cx.intLit 1 *)
+    (*  | Some m -> m) *)
   | SLet { args; body } ->
-    let argsRes =
-      args
-      |> List.map ~f:(fun { binding = _; value } -> getInnerAllocatedBlocks value)
-      |> List.reduce ~f:Int.max
-      |> Option.value ~default:1
-    in
+    let argsRes = getInnerAllocatedBlocksList (List.map args ~f:(fun a -> a.value)) in
     let bodyRes = getInnerAllocatedBlocksStmt body in
-    Int.max bodyRes argsRes
+    combineInnerAllocatedBlocks [ argsRes; bodyRes ]
   | SMallocLet { memArgs = _; body } -> getInnerAllocatedBlocksStmt body
-  | ReifyShapeIndex _ -> 1
+  | ReifyShapeIndex _ -> Cx.intLit 1
+
+and getInnerAllocatedBlocksList : type c. (device, c) Acorn.Expr.t list -> C.expr =
+  fun exprs ->
+  let exprs = List.map exprs ~f:getInnerAllocatedBlocks in
+  combineInnerAllocatedBlocks exprs
+
+and combineInnerAllocatedBlocks exprs =
+  let known, unknown =
+    List.partition_tf exprs ~f:(function
+      | Literal (Int64Literal _) | Literal (Int32Literal _) -> true
+      | _ -> false)
+  in
+  let known =
+    List.reduce known ~f:(fun a b ->
+      match a, b with
+      | Literal (Int64Literal a), Literal (Int32Literal b) ->
+        Literal (Int64Literal (Int.max a b))
+      | Literal (Int64Literal a), Literal (Int64Literal b) ->
+        Literal (Int64Literal (Int.max a b))
+      | Literal (Int32Literal a), Literal (Int64Literal b) ->
+        Literal (Int64Literal (Int.max a b))
+      | Literal (Int32Literal a), Literal (Int32Literal b) ->
+        Literal (Int32Literal (Int.max a b))
+      | _, _ -> raise Unreachable.default)
+  in
+  match known, unknown with
+  | Some p, [] -> p
+  | known, unknown ->
+    let known = known |> Option.map ~f:List.singleton |> Option.value ~default:[] in
+    List.append known unknown
+    |> List.reduce ~f:cMaxFunc
+    |> Option.value ~default:(Cx.intLit 1)
 ;;
+
+(* |> List.reduce ~f:cMaxFunc *)
+(* |> Option.value ~default:(Cx.intLit 1) *)
 
 let rec genMem : store:bool -> Mem.t -> (C.expr, _) GenState.u =
   fun ~store expr ->
@@ -703,7 +763,7 @@ let genCopyExprToMem =
       in
       GenState.writeForLoop
         ~loopVar:"i"
-        ~loopVarType:Int64
+        ~loopVarType:Int32
         ~initialValue:Cx.(intLit 0)
         ~cond:(fun loopVar -> Cx.(loopVar < size))
         ~loopVarUpdate:IncrementOne
@@ -1000,7 +1060,7 @@ let rec genMax ~store l ~default =
 
 let genIota ~loopVar iota =
   GenState.write
-  @@ Define { name = UniqueName iota; type' = Some Int64; value = Some loopVar }
+  @@ Define { name = UniqueName iota; type' = Some Int32; value = Some loopVar }
 ;;
 
 let rec genMatchMapBody (matcher : Expr.tupleMatch) res =
@@ -1048,6 +1108,8 @@ let rec genStmnt
     let%bind expr = genExpr ~hostOrDevice ~store:true expr in
     genCopyExprToMem ~expr ~mem:addr ~type'
   | Host, MapKernel { kernel; captures; blocks; threads } ->
+    let blocks = genParallelism blocks in
+    let threads = genParallelism threads in
     let%bind capturePasses = handleCaptures captures in
     let%bind resultInterim = genMem ~store:true kernel.mapResultMemDeviceInterim in
     let module Map = struct
@@ -1124,8 +1186,8 @@ let rec genStmnt
     let kernelPasses = capturePasses @ mapKernelPasses in
     let rec genMapBody
       chunkVar
-      totalIterSpace
-      Map.{ frameShapeSize = _; mapArgs; mapMemArgs; mapIotas; mapBody; bodySize = _ }
+      (* totalIterSpace *)
+        Map.{ frameShapeSize = _; mapArgs; mapMemArgs; mapIotas; mapBody; bodySize = _ }
       =
       let%bind loopVar =
         match mapBody with
@@ -1141,7 +1203,8 @@ let rec genStmnt
       | Statement statement -> genStmnt ~hostOrDevice:Device statement
       | SubMaps { subMaps; maxBodySize } ->
         subMaps
-        |> List.map ~f:(genMapBody Cx.(chunkVar % maxBodySize.device) totalIterSpace)
+        |> List.map
+             ~f:(genMapBody Cx.(chunkVar % maxBodySize.device) (* totalIterSpace *))
         |> GenState.all_unit
       (* ~elseBranch:(return ()) *)
     in
@@ -1155,7 +1218,7 @@ let rec genStmnt
             let%bind innerBlocks =
               GenState.createVarAuto
                 "innerBlocks"
-                Cx.(intLit blocks / annotatedMapKernel.frameShapeSize.device)
+                Cx.(blocks / annotatedMapKernel.frameShapeSize.device)
             in
             let indexMode = Option.value_exn kernel.map.indexMode in
             let loopVarInitValue =
@@ -1165,12 +1228,12 @@ let rec genStmnt
                 Cx.(blockIndex / innerBlocks)
               | Some _ ->
                 (* use threads with some help from blocks *)
-                Cx.((blockIndex * intLit blocks) + threadIndex)
+                Cx.((blockIndex * threads) + threadIndex)
             in
             let%bind () =
               GenState.writeForLoop
                 ~loopVar:"i"
-                ~loopVarType:Int64
+                ~loopVarType:Int32
                 ~initialValue:loopVarInitValue
                   (* ~initialValue:Cx.(blockIndex / innerBlocks * innerBlocks * intLit threads) *)
                   (* ~initialValue:Cx.((blockIndex * intLit threads) + threadIndex) *)
@@ -1180,7 +1243,7 @@ let rec genStmnt
                   (* ~loopVarUpdate:(Increment (Cx.intLit @@ (blocks * threads))) *)
                 ~loopVarUpdate:(Increment annotatedMapKernel.bodySize.device)
                 ~body:(fun loopVar ->
-                  genMapBody loopVar (blocks * threads) annotatedMapKernel)
+                  genMapBody loopVar (* (blocks * threads) *) annotatedMapKernel)
             in
             return ()
           in
@@ -1197,8 +1260,8 @@ let rec genStmnt
       @@ C.Eval
            (KernelLaunch
               { kernel = kernelName
-              ; blocks = Cx.intLit blocks
-              ; threads = Cx.intLit threads
+              ; blocks
+              ; threads
               ; args = List.map kernelPasses ~f:(fun pass -> pass.arg)
               })
     in
@@ -1825,17 +1888,17 @@ and genExpr
              (Unreachable.Error "Empty index mode that is not none, somethign went wrong")
          | Some allocatedBlocks ->
            let innerBlocks = getInnerAllocatedBlocks mapBody in
+           let cAllocatedBlocks = genIndexAllocSize allocatedBlocks in
            Cx.(
-             blockIndex
-             % (intLit allocatedBlocks * intLit innerBlocks)
-             / intLit innerBlocks
+             blockIndex % (cAllocatedBlocks * innerBlocks / innerBlocks)
              (* * (intLit innerBlocks * blockDim) *)))
       | Some _ ->
         (* easy case, just calculate index from here *)
         (match allocatedBlocks with
          | None -> threadIndex
          | Some allocatedBlocks ->
-           Cx.((blockIndex % intLit allocatedBlocks * blockDim) + threadIndex))
+           let cAllocatedBlocks = genIndexAllocSize allocatedBlocks in
+           Cx.((blockIndex % cAllocatedBlocks * blockDim) + threadIndex))
     in
     let%bind loopVar =
       GenState.createName (NameOfStr { str = "i"; needsUniquifying = true })
@@ -2043,6 +2106,8 @@ and genExpr
     let kernelPasses =
       capturePasses @ [ dInPass; mapResultMemInterimPass; scatterResultMemInterimPass ]
     in
+    let threads = genParallelism threads in
+    let blocks = genParallelism blocks in
     let%bind kernelName =
       GenState.defineFun
         (NameOfStr { str = "scatterKernel"; needsUniquifying = true })
@@ -2054,9 +2119,9 @@ and genExpr
               GenState.writeForLoop
                 ~loopVar:"i"
                 ~loopVarType:Int64
-                ~initialValue:Cx.((blockIndex * intLit threads) + threadIndex)
+                ~initialValue:Cx.((blockIndex * threads) + threadIndex)
                 ~cond:(fun i -> Cx.(i < dIn))
-                ~loopVarUpdate:(Increment (Cx.intLit @@ (blocks * threads)))
+                ~loopVarUpdate:(Increment Cx.(blocks * threads))
                 ~body:(fun loopVar ->
                   let%bind () = GenState.comment "perform the map" in
                   let%bind () =
@@ -2110,8 +2175,8 @@ and genExpr
       @@ C.Eval
            (KernelLaunch
               { kernel = kernelName
-              ; blocks = Cx.intLit blocks
-              ; threads = Cx.intLit threads
+              ; blocks
+              ; threads
               ; args = List.map kernelPasses ~f:(fun pass -> pass.arg)
               })
     in
@@ -2190,6 +2255,8 @@ and genExpr
         cReduceResultsMemInterimType
         cReduceResultsMemInterimHost
     in
+    let blocks = genParallelism blocks in
+    let threads = genParallelism threads in
     let%bind dHost = GenState.createVarAuto "d" @@ genDim d in
     let kernelPasses =
       capturePasses @ [ mapResultMemInterimPass; reduceResultMemInterimPass ]
@@ -2227,15 +2294,15 @@ and genExpr
                 ; name
                 ; type' = Some cReduceType
                 ; value = None
-                ; dims = Cx.[ intLit threads; intLit Int.(threads + 1) ]
+                ; dims = Cx.[ threads; threads + intLit 1 ]
                 }
             in
             let%bind dDevice = GenState.createVarAuto "d" @@ genDim d in
             let%bind blockRemainder =
-              GenState.createVarAuto "blockRemainder" @@ Cx.(dDevice % intLit blocks)
+              GenState.createVarAuto "blockRemainder" @@ Cx.(dDevice % blocks)
             in
             let%bind elementsPerBlock =
-              GenState.createVarAuto "elementsPerBlock" Cx.(dDevice / intLit blocks)
+              GenState.createVarAuto "elementsPerBlock" Cx.(dDevice / blocks)
             in
             let%bind elementsThisBlock =
               GenState.createVarAuto "elementsThisBlock"
@@ -2254,12 +2321,11 @@ and genExpr
                      ~else':((blockIndex * elementsPerBlock) + blockRemainder))
             in
             let%bind threadRemainder =
-              GenState.createVarAuto "threadRemainder"
-              @@ Cx.(elementsThisBlock % intLit threads)
+              GenState.createVarAuto "threadRemainder" @@ Cx.(elementsThisBlock % threads)
             in
             let%bind elementsPerThread =
               GenState.createVarAuto "elementsPerThread"
-              @@ Cx.(elementsThisBlock / intLit threads)
+              @@ Cx.(elementsThisBlock / threads)
             in
             let%bind elementsThisThread =
               GenState.createVarAuto "elementsThisThread"
@@ -2276,8 +2342,8 @@ and genExpr
             let%bind slices =
               GenState.createVarAuto "slices"
               @@ Cx.(
-                   (elementsThisBlock + intLit Int.((threads * threads) - 1))
-                   / intLit Int.(threads * threads))
+                   (elementsThisBlock + ((threads * threads) - intLit 1))
+                   / (threads * threads))
             in
             (* loop over chunks to compute the thread sum *)
             let%bind () =
@@ -2293,7 +2359,7 @@ and genExpr
                       ~loopVar:"i"
                       ~loopVarType:Int64
                       ~initialValue:Cx.(intLit 0)
-                      ~cond:(fun i -> Cx.(i < intLit threads))
+                      ~cond:(fun i -> Cx.(i < threads))
                       ~loopVarUpdate:IncrementOne
                       ~body:(fun i ->
                         let%bind offset =
@@ -2306,7 +2372,7 @@ and genExpr
                         in
                         let%bind indexInBlock =
                           GenState.createVarAuto "indexInBlock"
-                          @@ Cx.(offset + (slice * intLit threads) + threadIndex)
+                          @@ Cx.(offset + (slice * threads) + threadIndex)
                         in
                         GenState.writeIte
                           ~cond:Cx.(indexInBlock < elementsThisBlock)
@@ -2347,8 +2413,8 @@ and genExpr
                     @@ Cx.(
                          ternary
                            ~cond:(slice == slices - intLit 1)
-                           ~then':(elementsThisThread % intLit threads)
-                           ~else':(intLit threads))
+                           ~then':(elementsThisThread % threads)
+                           ~else':threads)
                   in
                   let%bind () =
                     GenState.writeForLoop
@@ -2396,7 +2462,7 @@ and genExpr
                           ternary
                             ~cond:(elementsPerThread == intLit 0)
                             ~then':threadRemainder
-                            ~else':(intLit threads))
+                            ~else':threads)
                    in
                    let%bind () =
                      GenState.writeForLoop
@@ -2446,8 +2512,8 @@ and genExpr
       @@ C.Eval
            (KernelLaunch
               { kernel = kernelName
-              ; blocks = Cx.intLit blocks
-              ; threads = Cx.intLit threads
+              ; blocks
+              ; threads
               ; args = List.map kernelPasses ~f:(fun pass -> pass.arg)
               })
     in
@@ -2485,7 +2551,7 @@ and genExpr
         ~loopVar:"i"
         ~loopVarType:Int64
         ~initialValue:Cx.(intLit 0)
-        ~cond:Cx.(fun i -> i < callBuiltin "std::min" [ intLit blocks; dHost ])
+        ~cond:Cx.(fun i -> i < callBuiltin "std::min" [ blocks; dHost ])
         ~loopVarUpdate:IncrementOne
         ~body:(fun i ->
           let%bind res =
@@ -2564,6 +2630,8 @@ and genExpr
     let%bind cScanResultMemInterimHost = genMem ~store:true scanResultMemDeviceInterim in
     let%bind cZeroType = genType @@ Expr.type' zero in
     let%bind cZeroHost = genExpr ~hostOrDevice:Host ~store:true zero in
+    let blocks = genParallelism blocks in
+    let threads = genParallelism threads in
     let%bind capturePasses = handleCaptures captures in
     (* runScan creates a `scanRunner` function and calls it. It also generates
        kernels that `scanRunner` calls. runScan can create either a version with or without
@@ -2605,10 +2673,10 @@ and genExpr
             let%bind runnerBody =
               GenState.block
               @@
-              let maxKernelProcessingSize = 2 * blocks * threads in
+              let maxKernelProcessingSize = Cx.(intLit 2 * blocks * threads) in
               let conflictFreeOffset n =
                 let logNumBanks = 4 in
-                Int.shift_right n logNumBanks
+                Cx.(n << intLit logNumBanks)
               in
               let conflictFreeOffsetC n =
                 let logNumBanks = 4 in
@@ -2616,24 +2684,23 @@ and genExpr
               in
               let%bind () = GenState.comment "how many full runs we can do" in
               let%bind runs =
-                GenState.createVarAuto "runs" @@ Cx.(n / intLit maxKernelProcessingSize)
+                GenState.createVarAuto "runs" @@ Cx.(n / maxKernelProcessingSize)
               in
               let%bind () = GenState.comment "how many elements don't fit in full runs" in
               let%bind unevenSize =
-                GenState.createVarAuto "unevenSize"
-                @@ Cx.(n % intLit maxKernelProcessingSize)
+                GenState.createVarAuto "unevenSize" @@ Cx.(n % maxKernelProcessingSize)
               in
               let%bind () = GenState.comment "number of full blocks that fit in uneven" in
               let%bind unevenBlocks =
                 GenState.createVarAuto "unevenBlocks"
-                @@ Cx.(unevenSize / intLit Int.(2 * threads))
+                @@ Cx.(unevenSize / (intLit 2 * threads))
               in
               let%bind () =
                 GenState.comment "number of elements that don't fit in one block"
               in
               let%bind lastBlockSize =
                 GenState.createVarAuto "lastBlockSize"
-                @@ Cx.(unevenSize % intLit Int.(2 * threads))
+                @@ Cx.(unevenSize % (intLit 2 * threads))
               in
               (* hacky workaround for blockCount here. It needs to be used to define the
                  size of an array malloced. To avoid substantial code changes, we create
@@ -2648,8 +2715,7 @@ and genExpr
                      ; value =
                          Some
                            Cx.(
-                             (n + intLit Int.((2 * threads) - 1))
-                             / intLit Int.(2 * threads))
+                             (n + ((intLit 2 * threads) - intLit 1)) / (intLit 2 * threads))
                      }
               in
               let blockCount = Cx.refId blockCountId in
@@ -2749,13 +2815,13 @@ and genExpr
                           ; type' = Some cScanElementType
                           ; value = None
                           ; dims =
-                              [ Cx.intLit ((threads * 2) + conflictFreeOffset threads) ]
+                              [ Cx.((threads * intLit 2) + conflictFreeOffset threads) ]
                           }
                       in
                       let%bind offset = GenState.createVarAuto "offset" @@ Cx.intLit 1 in
                       let%bind ai = GenState.createVarAuto "ai" @@ threadIndex in
                       let%bind bi =
-                        GenState.createVarAuto "bi" @@ Cx.(threadIndex + intLit threads)
+                        GenState.createVarAuto "bi" @@ Cx.(threadIndex + threads)
                       in
                       let%bind bankOffsetA =
                         GenState.createVarAuto "bankOffsetA" @@ conflictFreeOffsetC ai
@@ -2781,10 +2847,7 @@ and genExpr
                               ~inputDerefer
                               ~mapResultMemInterim
                               ~loopVar:
-                                Cx.(
-                                  chunkOffset
-                                  + (blockIndex * intLit threads * intLit 2)
-                                  + i)
+                                Cx.(chunkOffset + (blockIndex * threads * intLit 2) + i)
                           in
                           GenState.write
                             Cx.(arrayDeref temp [ i + bankOffset ] := scanArg)
@@ -2797,7 +2860,7 @@ and genExpr
                         GenState.writeForLoop
                           ~loopVar:"d"
                           ~loopVarType:Int64
-                          ~initialValue:(Cx.intLit threads)
+                          ~initialValue:threads
                           ~cond:(fun d -> Cx.(d > intLit 0))
                           ~loopVarUpdate:(ShiftRight (Cx.intLit 1))
                           ~body:(fun d ->
@@ -2846,7 +2909,7 @@ and genExpr
                           ~loopVar:"d"
                           ~loopVarType:Int64
                           ~initialValue:(Cx.intLit 1)
-                          ~cond:(fun d -> Cx.(d < intLit threads * intLit 2))
+                          ~cond:(fun d -> Cx.(d < threads * intLit 2))
                           ~loopVarUpdate:(ShiftLeft (Cx.intLit 1))
                           ~body:(fun d ->
                             let%bind () =
@@ -2914,10 +2977,7 @@ and genExpr
                         genCopyExprToMem
                           ~mem:
                             (outputAsMemDerefer
-                               Cx.(
-                                 chunkOffset
-                                 + (blockIndex * intLit threads * intLit 2)
-                                 + ai))
+                               Cx.(chunkOffset + (blockIndex * threads * intLit 2) + ai))
                           ~expr:Cx.(arrayDeref temp [ ai + bankOffsetA ])
                           ~type':scanElementType
                       in
@@ -2925,10 +2985,7 @@ and genExpr
                         genCopyExprToMem
                           ~mem:
                             (outputAsMemDerefer
-                               Cx.(
-                                 chunkOffset
-                                 + (blockIndex * intLit threads * intLit 2)
-                                 + bi))
+                               Cx.(chunkOffset + (blockIndex * threads * intLit 2) + bi))
                           ~expr:Cx.(arrayDeref temp [ bi + bankOffsetB ])
                           ~type':scanElementType
                       in
@@ -2944,8 +3001,8 @@ and genExpr
                                outputDerefer
                                  Cx.(
                                    chunkOffset
-                                   + (blockIndex * intLit threads * intLit 2)
-                                   + ((intLit threads * intLit 2) - intLit 1))
+                                   + (blockIndex * threads * intLit 2)
+                                   + ((threads * intLit 2) - intLit 1))
                              in
                              let%bind b =
                                getInputElementOrDoMap
@@ -2954,8 +3011,8 @@ and genExpr
                                  ~loopVar:
                                    Cx.(
                                      chunkOffset
-                                     + (blockIndex * intLit threads * intLit 2)
-                                     + (intLit threads * intLit 2)
+                                     + (blockIndex * threads * intLit 2)
+                                     + (threads * intLit 2)
                                      - intLit 1)
                              in
                              let%bind sum = genComputeSum a b in
@@ -3002,8 +3059,8 @@ and genExpr
                   ~body:(fun i ->
                     let commonArgs =
                       cOutput
-                      :: Cx.(intLit maxKernelProcessingSize * i)
-                      :: sumsAsMemDerefer Cx.(i * intLit blocks)
+                      :: Cx.(maxKernelProcessingSize * i)
+                      :: sumsAsMemDerefer Cx.(i * blocks)
                       :: List.map innerCapturePasses ~f:(fun p -> p.arg)
                     in
                     let args =
@@ -3013,12 +3070,7 @@ and genExpr
                     in
                     GenState.write
                     @@ C.Eval
-                         (KernelLaunch
-                            { kernel = scanKernel
-                            ; blocks = Cx.intLit blocks
-                            ; threads = Cx.intLit threads
-                            ; args
-                            }))
+                         (KernelLaunch { kernel = scanKernel; blocks; threads; args }))
               in
               let%bind () =
                 GenState.writeIte
@@ -3026,8 +3078,8 @@ and genExpr
                   ~thenBranch:
                     (let commonArgs =
                        cOutput
-                       :: Cx.(intLit maxKernelProcessingSize * runs)
-                       :: sumsAsMemDerefer Cx.(runs * intLit blocks)
+                       :: Cx.(maxKernelProcessingSize * runs)
+                       :: sumsAsMemDerefer Cx.(runs * blocks)
                        :: List.map innerCapturePasses ~f:(fun p -> p.arg)
                      in
                      let args =
@@ -3038,11 +3090,7 @@ and genExpr
                      GenState.write
                      @@ C.Eval
                           (KernelLaunch
-                             { kernel = scanKernel
-                             ; blocks = unevenBlocks
-                             ; threads = Cx.intLit threads
-                             ; args
-                             }))
+                             { kernel = scanKernel; blocks = unevenBlocks; threads; args }))
                   ~elseBranch:(return ())
               in
               let%bind naiveScanKernel =
@@ -3081,7 +3129,7 @@ and genExpr
                           ; name
                           ; type' = Some cScanElementType
                           ; value = None
-                          ; dims = [ Cx.intLit (threads * 10) ]
+                          ; dims = [ Cx.(threads * intLit 10) ]
                           }
                       in
                       let%bind pout = GenState.createVarAuto "pout" @@ Cx.intLit 0 in
@@ -3207,14 +3255,14 @@ and genExpr
                        GenState.createVarAuto
                          "lastOffset"
                          Cx.(
-                           (intLit maxKernelProcessingSize * runs)
-                           + (unevenBlocks * intLit threads * intLit 2))
+                           (maxKernelProcessingSize * runs)
+                           + (unevenBlocks * threads * intLit 2))
                      in
                      let commonArgs =
                        cOutput
                        :: lastOffset
                        :: lastBlockSize
-                       :: sumsAsMemDerefer Cx.((runs * intLit blocks) + unevenBlocks)
+                       :: sumsAsMemDerefer Cx.((runs * blocks) + unevenBlocks)
                        :: List.map innerCapturePasses ~f:(fun p -> p.arg)
                      in
                      let args =
@@ -3277,8 +3325,7 @@ and genExpr
                        `DeviceToDevice
                        ~type':scanElementType
                        ~target:(outputDerefer n)
-                       ~source:
-                         (sumsAsMemDerefer Cx.((runs * intLit blocks) + unevenBlocks)))
+                       ~source:(sumsAsMemDerefer Cx.((runs * blocks) + unevenBlocks)))
                   ~elseBranch:(return ())
               in
               let%bind adjBlockValues, adjBlockValuesPass =
@@ -3366,7 +3413,7 @@ and genExpr
                    (C.KernelLaunch
                       { kernel = adjBlock
                       ; blocks = Cx.(blockCount + intLit 1)
-                      ; threads = Cx.(intLit Int.(threads * 2))
+                      ; threads = Cx.(threads * intLit 2)
                       ; args = List.map adjBlockPasses ~f:(fun p -> p.arg)
                       })
             in
@@ -3519,15 +3566,6 @@ and genExpr
     let%bind subarray = genSubArray cArrayArg (Expr.type' arrayArg) outType in
     storeIfRequested ~name:"subarray" subarray
   | Host, IfParallelismHitsCutoff { parallelism; cutoff; then'; else'; type' } ->
-    let rec genParallelism (parallelism : Expr.parallelism) =
-      match parallelism with
-      | KnownParallelism n -> Cx.(intLit n)
-      | Parallelism { shape; rest } ->
-        let shapeSize = genShapeElementSize shape in
-        Cx.(shapeSize * genParallelism rest)
-      | MaxParallelism pars ->
-        Cx.callBuiltin "std::max" [ Arr (List.map pars ~f:genParallelism) ]
-    in
     let parallelism = genParallelism parallelism in
     let%bind cType = genType type' in
     let%bind resVar =
@@ -3573,6 +3611,15 @@ and genExpr
     let%bind mem = genMem ~store:true addr in
     genGetmem mem type'
 
+and genParallelism (parallelism : Expr.parallelism) =
+  match parallelism with
+  | KnownParallelism n -> Cx.(intLit n)
+  | Parallelism { shape; rest } ->
+    let shapeSize = genShapeElementSize shape in
+    Cx.(shapeSize * genParallelism rest)
+  | MaxParallelism pars ->
+    Cx.callBuiltin "std::max" [ Arr (List.map pars ~f:genParallelism) ]
+
 and genLet
   : type l sIn sOut.
     hostOrDevice:l hostOrDevice
@@ -3609,6 +3656,11 @@ and genMallocLet
         match shapeElement with
         | Index.Add { const = _; refs; lens } -> Map.is_empty refs && Map.is_empty lens
         | Index.ShapeRef _ -> false)
+      && 1024
+         >= NeList.fold_left shape ~init:1 ~f:(fun acc s ->
+           match s with
+           | Index.Add { const; refs = _; lens = _ } -> acc * const
+           | Index.ShapeRef _ -> acc)
     | _, _, _ -> false
   in
   let%bind () =

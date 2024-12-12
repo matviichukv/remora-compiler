@@ -1,4 +1,4 @@
-open! Base
+open! Core
 
 (* The Nested language represents a Remora program where maps only operate
    on one shape element at a time and can be fused with consumers *)
@@ -58,9 +58,14 @@ module Type = struct
 end
 
 module Expr = struct
+  type indexAlloc =
+    | Static of int
+    | Dynamic of Index.shapeElement
+  [@@deriving sexp_of, equal, compare]
+
   type indexMode =
-    { allocatedThreads : int option
-    ; allocatedBlocks : int option
+    { allocatedThreads : indexAlloc option
+    ; allocatedBlocks : indexAlloc option
     }
   [@@deriving sexp_of, equal, compare]
 
@@ -325,7 +330,7 @@ module Expr = struct
     | Append of append
     | Zip of zip
     | Unzip of unzip
-  [@@deriving equal, compare]
+  [@@deriving equal, compare, show]
 
   let type' : t -> Type.t = function
     | Box box -> Sigma box.type'
@@ -649,6 +654,10 @@ module Expr = struct
   end
 
   include Sexp_of
+
+  let pp_t (f : Format.formatter) (expr : t) =
+    Format.fprintf f "%s" (Sexp.to_string_hum ([%sexp_of: t] expr))
+  ;;
 end
 
 type t = Expr.t

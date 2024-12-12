@@ -125,6 +125,7 @@ let rec showExpr = function
     in
     [%string "'\\%{Char.to_int c |> to_string_octal}'"]
   | Literal (Int64Literal i) -> [%string "INT64_C(%{i#Int})"]
+  | Literal (Int32Literal i) -> [%string "INT32_C(%{i#Int})"]
   | Literal (Float64Literal f) -> Float.to_string f
   | Literal (BoolLiteral true) -> "true"
   | Literal (BoolLiteral false) -> "false"

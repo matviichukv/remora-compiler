@@ -206,8 +206,8 @@ module Expr = struct
 
   and 'k kernel =
     { kernel : 'k
-    ; blocks : int
-    ; threads : int
+    ; blocks : parallelism
+    ; threads : parallelism
     }
 
   and 'l values =
@@ -655,8 +655,8 @@ module Expr = struct
       fun sexp_of_k { kernel; blocks; threads } ->
       Sexp.List
         [ Sexp.Atom "kernel"
-        ; Sexp.List [ Sexp.Atom "blocks"; Int.sexp_of_t blocks ]
-        ; Sexp.List [ Sexp.Atom "threads"; Int.sexp_of_t threads ]
+        ; Sexp.List [ Sexp.Atom "blocks"; sexp_of_parallelism blocks ]
+        ; Sexp.List [ Sexp.Atom "threads"; sexp_of_parallelism threads ]
         ; sexp_of_k kernel
         ]
 

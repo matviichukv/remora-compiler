@@ -1,4 +1,4 @@
-open! Base
+open! Core
 
 module type S = sig
   type source
@@ -27,14 +27,16 @@ module Make (SB : Source.BuilderT) = struct
       @> (module Nest.Stage (SB))
       (* @> (module Show.Passthrough.Stage (Nested) (SB)) *)
       @> (module FuseAndSimplify.Stage (SB))
-      @> (module Show.Passthrough.Stage (Nested) (SB))
+      (* @> (module Show.Passthrough.Stage (Nested) (SB)) *)
       @> (module Kernelize.Stage (SB))
       @> (module Show.Passthrough.Stage (Corn) (SB))
       @> (module Alloc.Stage (SB))
       (* @> (module Show.Passthrough.Stage (Acorn.SansCaptures) (SB)) *)
       @> (module Capture.Stage (SB))
       (* @> (module Show.Passthrough.Stage (Acorn.WithCaptures) (SB)) *)
-      @> (module RemoveMemMove.Stage (SB))
+      (* @> (module RemoveMemMove.Stage (SB)) *)
+      (* @> (module Show.Passthrough.Stage (Acorn.WithCaptures) (SB)) *)
+      @> (module SimplifyAcorn.Stage (SB))
       (* @> (module Show.Passthrough.Stage (Acorn.WithCaptures) (SB)) *)
       @> (module Codegen.Stage (SB))
       @> (module PrintC.Stage (SB))

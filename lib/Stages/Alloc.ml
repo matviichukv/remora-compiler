@@ -47,6 +47,20 @@ let convertShapeElement = function
 
 let convertShape = List.map ~f:convertShapeElement
 
+let convertIndexAlloc (indexAlloc : Nested.Expr.indexAlloc) : Acorn.Expr.indexAlloc =
+  match indexAlloc with
+  | Nested.Expr.Static i -> Static i
+  | Nested.Expr.Dynamic s -> Dynamic (convertShapeElement s)
+;;
+
+let convertIndexMode (indexMode : Nested.Expr.indexMode) : Acorn.Expr.indexMode =
+  match indexMode with
+  | { allocatedThreads; allocatedBlocks } ->
+    let allocatedBlocks = Option.map allocatedBlocks ~f:convertIndexAlloc in
+    let allocatedThreads = Option.map allocatedThreads ~f:convertIndexAlloc in
+    { allocatedBlocks; allocatedThreads }
+;;
+
 let getShapeLen shape =
   let open Acorn.Index in
   shape
@@ -64,6 +78,15 @@ let rec convertParallelism (parallelism : Corn.Expr.parallelism) =
       { shape = convertShapeElement shape; rest = convertParallelism rest }
   | MaxParallelism pars -> Acorn.Expr.MaxParallelism (List.map pars ~f:convertParallelism)
 ;;
+
+(* let rec convertParallelismToIndex (parallelism : Corn.Expr.parallelism) *)
+(*   : Corn.Index.shapeElement *)
+(*   = *)
+(*   match parallelism with *)
+(*   | KnownParallelism n -> Add { refs = Map.empty (module Identifier); const = n } *)
+(*   | Parallelism _ -> _ *)
+(*   | MaxParallelism _ -> _ *)
+(* ;; *)
 
 let rec canonicalizeType (type' : Corn.Type.t) : Acorn.Type.t =
   match type' with
@@ -568,6 +591,7 @@ module AllocAcc = struct
     ; uses : Set.M(Identifier).t
     ; type' : Acorn.Type.t
     }
+  [@@deriving sexp_of]
 
   type ('a, 'e) t = ('a * allocation list, 'e) CompilerState.u
 
@@ -667,7 +691,7 @@ let avoidCapturesGen ~wrap ~capturesToAvoid prog =
   let open CompilerState in
   let open Let_syntax in
   let%bind result, allocs = prog in
-  let allocsToDeclare, allocsToPropogate =
+  let allocsToDeclare, allocsToPropagate =
     List.partition_map allocs ~f:(fun (alloc : AllocAcc.allocation) ->
       if Set.is_empty (Set.inter capturesToAvoid alloc.uses)
       then Second alloc
@@ -678,7 +702,7 @@ let avoidCapturesGen ~wrap ~capturesToAvoid prog =
     | [] -> result
     | _ :: _ -> wrap ~allocsToDeclare result
   in
-  return (result, allocsToPropogate)
+  return (result, allocsToPropagate)
 ;;
 
 let avoidCaptures ~capturesToAvoid prog =
@@ -695,6 +719,65 @@ let avoidCapturesInStatement ~capturesToAvoid prog =
       Acorn.Expr.SMallocLet { memArgs = allocsToDeclare; body })
     ~capturesToAvoid
     prog
+;;
+
+let avoidLargeDeviceAllocations
+  (prog : ('a, 'b * AllocAcc.allocation list, 'e) CompilerState.t)
+  ~wrap
+  =
+  let open CompilerState in
+  let open Let_syntax in
+  let%bind result, allocs = prog in
+  let rec allocSize (type' : Acorn.Type.t) : int option =
+    match type' with
+    | Acorn.Type.Tuple types ->
+      let typeSizes = List.map ~f:allocSize types in
+      if List.for_all typeSizes ~f:Option.is_some
+      then
+        List.fold_left typeSizes ~init:0 ~f:(fun acc t -> acc + Option.value_exn t)
+        |> Some
+      else None
+    | Acorn.Type.Atom a ->
+      (match a with
+       | Acorn.Type.Sigma _ -> None
+       | Acorn.Type.Literal _ -> Some 1)
+    | Acorn.Type.Array { element; shape } ->
+      let elementSize = allocSize (Acorn.Type.Atom element) in
+      (match elementSize with
+       | None -> None
+       | Some i ->
+         NeList.fold_left shape ~init:(Some 1) ~f:(fun acc s ->
+           match acc with
+           | None -> None
+           | Some i ->
+             (match s with
+              | Acorn.Index.Add { const; refs; lens }
+                when Map.is_empty refs && Map.is_empty lens -> Some (i * const)
+              | _ -> None))
+         |> Option.map ~f:(( * ) i))
+  in
+  let allocsToDeclare, allocsToPropagate =
+    List.partition_tf allocs ~f:(fun { binding = _; mallocLoc; uses = _; type' } ->
+      match mallocLoc with
+      | Acorn.Expr.MallocHost -> false
+      | Acorn.Expr.MallocDevice ->
+        let size = allocSize type' in
+        (match size with
+         | None -> false
+         | Some i -> i <= 1024))
+  in
+  let allocsToDeclare = List.map allocsToDeclare ~f:AllocAcc.allocationToMallocMemArg in
+  allocs
+  |> [%sexp_of: AllocAcc.allocation list]
+  |> Sexp.to_string_hum
+  |> Printf.sprintf "declare:\n%s"
+  |> Stdio.prerr_endline;
+  let result =
+    match allocsToDeclare with
+    | [] -> result
+    | _ -> wrap ~allocsToDeclare result
+  in
+  return (result, allocsToPropagate)
 ;;
 
 let declareAllAllocs prog =
@@ -843,7 +926,7 @@ let rec allocRequest
          -> Acorn.Mem.t
          -> l Expr.sansCaptures)
       -> isKernel:bool
-      -> blocks:int
+      -> blocks:Acorn.Index.shapeElement
       -> innerMallocLoc:Acorn.Expr.mallocLoc
       -> createMapTargetAddr:(targetAddr option -> targetAddr option)
       -> createMapResultMemFinal:(Acorn.Mem.t -> (Acorn.Mem.t, 'e) AllocAcc.t)
@@ -960,6 +1043,7 @@ let rec allocRequest
       and body =
         allocRequest ~mallocLoc:innerMallocLoc ~writeToAddr:None body >>| getExpr
       in
+      let indexMode = Option.map ~f:convertIndexMode indexMode in
       return
         Expr.
           { arg =
@@ -985,6 +1069,7 @@ let rec allocRequest
       let%bind scanResultMemInterim =
         malloc ~mallocLoc:innerMallocLoc scanType "scan-interim-result"
       in
+      let indexMode = Option.map ~f:convertIndexMode indexMode in
       let%bind scanResultMemFinal = createConsumerResultMemFinal scanResultMemInterim in
       return
         ( scanResultMemInterim
@@ -1019,9 +1104,8 @@ let rec allocRequest
           |> declareAllUsedAllocs
         in
         let interimResultMemType =
-          Type.array
-            ~element:(Expr.type' reduce.body)
-            ~size:(Add (Index.dimensionConstant blocks))
+          Type.array ~element:(Expr.type' reduce.body) ~size:blocks
+          (* ~size:(Add (Index.dimensionConstant blocks)) *)
         in
         let%bind interimResultMemDeviceInterim =
           malloc ~mallocLoc:innerMallocLoc interimResultMemType "reduce-interim-result"
@@ -1114,6 +1198,7 @@ let rec allocRequest
                   })
            , false )
     in
+    let indexMode = Option.map indexMode ~f:convertIndexMode in
     let%bind consumer, consumerCopyRequired = processConsumer consumer in
     let loopBlock : (l, lInner, seqOrPar, unit, exists) Expr.loopBlock =
       { frameShape = convertShapeElement frameShape
@@ -1295,7 +1380,7 @@ let rec allocRequest
     allocLoopBlock
       ~wrapLoopBlock:(fun loopBlock _ -> Expr.LoopBlock loopBlock)
       ~isKernel:false
-      ~blocks:0
+      ~blocks:(Add (Index.dimensionConstant 0))
       ~innerMallocLoc:mallocLoc
       ~createMapTargetAddr:(fun targetAddr -> targetAddr)
       ~createMapResultMemFinal:(fun mem -> return mem)
@@ -1305,6 +1390,14 @@ let rec allocRequest
   | LoopKernel { kernel = loopBlock; blocks; threads } ->
     let type' = canonicalizeType @@ Tuple loopBlock.type' in
     let%bind loopBlockResultMem = getMemForResult type' "loop-block-mem-result" in
+    let blocks = convertParallelism blocks in
+    let threads = convertParallelism threads in
+    let blocksIndex : Index.shapeElement =
+      match blocks with
+      | KnownParallelism n -> Add (Index.dimensionConstant n)
+      | Parallelism { shape; rest = KnownParallelism 1 } -> shape
+      | _ -> raise Unimplemented.default
+    in
     let allocedKernel =
       allocLoopBlock
         ~wrapLoopBlock:(fun loopBlock mapResultMemDeviceInterim ->
@@ -1315,7 +1408,7 @@ let rec allocRequest
             ; threads
             })
         ~isKernel:true
-        ~blocks
+        ~blocks:blocksIndex
         ~innerMallocLoc:MallocDevice
         ~createMapTargetAddr:(fun _ -> None)
         ~createMapResultMemFinal:(fun _ ->
@@ -1467,6 +1560,8 @@ let rec allocRequest
           let%bind expr =
             allocDevice ~writeToAddr:targetAddr expr
             >>| getStatement
+            |> avoidLargeDeviceAllocations ~wrap:(fun ~allocsToDeclare body ->
+              SMallocLet { memArgs = allocsToDeclare; body })
             |> avoidCapturesInStatement ~capturesToAvoid:bindingsForMapBody
           in
           return @@ Expr.MapBodyStatement expr
@@ -1493,6 +1588,7 @@ let rec allocRequest
           Acorn.Expr.{ memBinding; mem })
         @ mapBodyMemArgs
       in
+      let indexMode = Option.map ~f:convertIndexMode indexMode in
       ( ({ frameShape = convertShapeElement frameShape
          ; indexMode
          ; mapArgs
@@ -1506,24 +1602,27 @@ let rec allocRequest
     in
     let type' = canonicalizeType mapKernel.type' in
     let%bind mapResultMemHostFinal = getMemForResult type' "map-mem-result" in
-    let%map mapInKernel, mapResultMemDeviceInterim =
+    let blocks = convertParallelism blocks in
+    let threads = convertParallelism threads in
+    let%map mapKernel =
       allocMapKernel
         ~outerBindingsForMapBody:(Set.empty (module Identifier))
         ~writeToAddr:None
         mapKernel
-    in
-    let mapKernel =
-      Expr.MapKernel
-        { kernel =
-            { label = mapKernel.label
-            ; map = mapInKernel
-            ; mapResultMemDeviceInterim
-            ; mapResultMemHostFinal
-            }
-        ; captures = ()
-        ; blocks
-        ; threads
-        }
+      |> AllocAcc.map ~f:(fun (mapInKernel, mapResultMemDeviceInterim) ->
+        Expr.MapKernel
+          { kernel =
+              { label = mapKernel.label
+              ; map = mapInKernel
+              ; mapResultMemDeviceInterim
+              ; mapResultMemHostFinal
+              }
+          ; captures = ()
+          ; blocks
+          ; threads
+          })
+      |> avoidLargeDeviceAllocations ~wrap:(fun ~allocsToDeclare body ->
+        SMallocLet { memArgs = allocsToDeclare; body })
     in
     { expr = Expr.eseq ~statements:[ mapKernel ] ~expr:(Expr.getmem mapResultMemHostFinal)
     ; statement = mapKernel

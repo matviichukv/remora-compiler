@@ -76,6 +76,7 @@ and type' =
 and literal =
   | CharLiteral of char
   | Int64Literal of int
+  | Int32Literal of int
   | Float64Literal of float
   | BoolLiteral of bool
   | StringLiteral of string
@@ -210,7 +211,7 @@ module Syntax = struct
   let ( || ) arg1 arg2 = Binop { op = "||"; arg1; arg2 }
   let pp arg = PrefixOp { op = "++"; arg }
   let not arg = PrefixOp { op = "!"; arg }
-  let intLit i = Literal (Int64Literal i)
+  let intLit i = Literal (Int32Literal i)
   let charLit c = Literal (CharLiteral c)
   let refStr str = VarRef (StrName str)
   let refId id = VarRef (UniqueName id)

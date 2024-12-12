@@ -152,6 +152,7 @@ module Mem = struct
     { id : Identifier.t
     ; type' : Type.t
     }
+  [@@deriving equal]
 
   (** A Mem.t represents a location in memory, on either host or device *)
   and t =
@@ -219,6 +220,17 @@ module Expr = struct
   type parallel = Corn.Expr.parallel
   type sequential = Corn.Expr.sequential
 
+  type indexAlloc =
+    | Static of int
+    | Dynamic of Index.shapeElement
+  [@@deriving sexp_of, equal, compare]
+
+  type indexMode =
+    { allocatedBlocks : indexAlloc option
+    ; allocatedThreads : indexAlloc option
+    }
+  [@@deriving sexp_of, equal, compare]
+
   type ref =
     { id : Identifier.t
     ; type' : Type.t
@@ -270,8 +282,8 @@ module Expr = struct
     }
 
   and mallocLoc =
-    | MallocHost : mallocLoc
-    | MallocDevice : mallocLoc
+    | MallocHost
+    | MallocDevice
 
   and memMallocArg =
     { memBinding : Identifier.t
@@ -360,7 +372,7 @@ module Expr = struct
   (** returns a tuple of (map results (tuple of arrays, not array of tuples), consumer result (unit if None)) *)
   and ('lOuter, 'lInner, 'p, 'c, 'e) loopBlock =
     { frameShape : Index.shapeElement
-    ; indexMode : Nested.Expr.indexMode option
+    ; indexMode : indexMode option
     ; mapArgs : mapArg list
     ; mapMemArgs : memArg list
     ; mapIotas : Identifier.t list
@@ -410,7 +422,7 @@ module Expr = struct
     { arg : reduceArg
     ; zero : ('lOuter, 'c) t
     ; body : ('lInner, 'c) t
-    ; indexMode : Nested.Expr.indexMode option
+    ; indexMode : indexMode option
     ; d : Index.dimension
     ; type' : Type.t
     }
@@ -419,7 +431,7 @@ module Expr = struct
     { arg : reduceArg
     ; zero : ('lOuter, 'c) t
     ; body : ('lInner, 'c) t
-    ; indexMode : Nested.Expr.indexMode option
+    ; indexMode : indexMode option
     ; d : Index.dimension
     ; scanResultMemFinal : Mem.t
     ; type' : Type.t
@@ -486,7 +498,7 @@ module Expr = struct
 
   and 'c mapInKernel =
     { frameShape : Index.shapeElement
-    ; indexMode : Nested.Expr.indexMode option
+    ; indexMode : indexMode option
     ; mapArgs : mapArg list
     ; mapMemArgs : memArg list
     ; mapIotas : Identifier.t list
@@ -543,8 +555,8 @@ module Expr = struct
   and ('k, 'c) kernel =
     { kernel : 'k
     ; captures : 'c
-    ; blocks : int
-    ; threads : int
+    ; blocks : parallelism
+    ; threads : parallelism
     }
 
   and ('l, 'c) eseq =
@@ -594,6 +606,13 @@ module Expr = struct
     | SLet : ('l, ('l, 'c) statement, 'c) let' -> ('l, 'c) statement
     | SMallocLet : ('l, 'c) statement mallocLet -> ('l, 'c) statement
     | ReifyShapeIndex : reifyShapeIndex -> (_, _) statement
+
+  let equal_mallocLoc (a : mallocLoc) (b : mallocLoc) : bool =
+    match a, b with
+    | MallocDevice, MallocDevice -> true
+    | MallocHost, MallocHost -> true
+    | _ -> false
+  ;;
 
   type captures =
     { exprCaptures : Type.t Map.M(Identifier).t
@@ -647,6 +666,214 @@ module Expr = struct
       | Type.Tuple elements -> List.nth_exn elements index
     in
     TupleDeref { tuple; index; type' = extractElementType (type' tuple) }
+  ;;
+
+  (* Return a set of all used variables in the given expression *)
+  let rec findUses : type l. (l, captures) t -> (Identifier.t, _) Set.t = function
+    | Ref { id; type' = _ } -> Set.singleton (module Identifier) id
+    | BoxValue { box; type' = _ } -> findUses box
+    | IndexLet { indexArgs; body; type' = _ } ->
+      let argUses =
+        List.map indexArgs ~f:(fun { indexBinding = _; indexValue; sort = _ } ->
+          match indexValue with
+          | Runtime expr -> findUses expr
+          | FromBox { box; i = _ } -> findUses box)
+      in
+      let bodyUses = findUses body in
+      Set.union_list (module Identifier) (bodyUses :: argUses)
+    | MallocLet { memArgs = _; body } -> findUses body
+    | ReifyDimensionIndex _ -> Set.empty (module Identifier)
+    | ShapeProd _ -> Set.empty (module Identifier)
+    | LoopBlock lb -> findUsesLoopBlock lb
+    | LoopKernel
+        { kernel = { mapResultMemDeviceInterim = _; loopBlock }
+        ; captures
+        ; blocks = _
+        ; threads = _
+        } ->
+      let captureUses = findUsesCaptures captures in
+      let loopBlockUses = findUsesLoopBlock loopBlock in
+      Set.union captureUses loopBlockUses
+    | Let { args; body } ->
+      let argsUses = List.map args ~f:(fun { binding = _; value } -> findUses value) in
+      let bodyUses = findUses body in
+      Set.union_list (module Identifier) (bodyUses :: argsUses)
+    | Box { indices = _; body; type' = _ } -> findUses body
+    | Literal _ -> Set.empty (module Identifier)
+    | Values { elements; type' = _ } ->
+      let uses = List.map elements ~f:findUses in
+      Set.union_list (module Identifier) uses
+    | ScalarPrimitive { op = _; args; type' = _ } ->
+      let uses = List.map args ~f:findUses in
+      Set.union_list (module Identifier) uses
+    | TupleDeref { index = _; tuple; type' = _ } -> findUses tuple
+    | ContiguousSubArray
+        { arrayArg; indexArg; originalShape = _; resultShape = _; type' = _ } ->
+      let arrayUses = findUses arrayArg in
+      let indexUses = findUses indexArg in
+      Set.union arrayUses indexUses
+    | IfParallelismHitsCutoff { parallelism = _; cutoff = _; then'; else'; type' = _ } ->
+      let thenUses = findUses then' in
+      let elseUses = findUses else' in
+      Set.union thenUses elseUses
+    | Eseq { statement; expr; type' = _ } ->
+      let statementUses = findUsesStatement statement in
+      let exprUses = findUses expr in
+      Set.union statementUses exprUses
+    | Getmem _ -> Set.empty (module Identifier)
+
+  and findUsesStatement : type l. (l, captures) statement -> (Identifier.t, _) Set.t
+    = function
+    | Putmem { expr; addr = _; type' = _ } -> findUses expr
+    | MapKernel
+        { kernel =
+            { label = _; map; mapResultMemDeviceInterim = _; mapResultMemHostFinal = _ }
+        ; captures
+        ; blocks = _
+        ; threads = _
+        } ->
+      let captureUses = findUsesCaptures captures in
+      let mapUses = findUsesMapInKernel map in
+      Set.union captureUses mapUses
+    | ComputeForSideEffects expr -> findUses expr
+    | Statements statements ->
+      Set.union_list (module Identifier) (List.map statements ~f:findUsesStatement)
+    | SLet { args; body } ->
+      let bodyUses = findUsesStatement body in
+      let argUses = List.map args ~f:(fun { binding = _; value } -> findUses value) in
+      Set.union_list (module Identifier) (bodyUses :: argUses)
+    | SMallocLet { memArgs = _; body } -> findUsesStatement body
+    | ReifyShapeIndex _ -> Set.empty (module Identifier)
+
+  and findUsesLoopBlock
+    : type o i p e. (o, i, p, captures, e) loopBlock -> (Identifier.t, _) Set.t
+    =
+    fun { frameShape = _
+        ; indexMode = _
+        ; mapArgs
+        ; mapMemArgs = _
+        ; mapIotas = _
+        ; mapBody
+        ; mapBodyMatcher = _
+        ; mapResults = _
+        ; mapResultMemFinal = _
+        ; consumer
+        ; type' = _
+        } ->
+    let consumerUsesMaybe = Maybe.map consumer ~f:findUsesConsumer in
+    let consumerUses =
+      match consumerUsesMaybe with
+      | Nothing -> Set.empty (module Identifier)
+      | Just uses -> uses
+    in
+    let mapArgsUses =
+      mapArgs
+      |> List.map ~f:(fun { binding = _; ref = { id; type' = _ } } -> id)
+      |> Set.of_list (module Identifier)
+    in
+    let mapBodyUses = findUses mapBody in
+    Set.union_list (module Identifier) [ consumerUses; mapArgsUses; mapBodyUses ]
+
+  and findUsesConsumer : type o i p. (o, i, p, _) consumerOp -> (Identifier.t, _) Set.t
+    = function
+    | ReduceSeq { arg; zero; body; indexMode = _; d = _; type' = _ } ->
+      let argUses = findUsesProduction arg.production in
+      let zeroUses = findUses zero in
+      let bodyUses = findUses body in
+      Set.union_list (module Identifier) [ argUses; zeroUses; bodyUses ]
+    | ReducePar
+        { reduce = { arg; zero; body; indexMode = _; d = _; type' = _ }
+        ; interimResultMemDeviceInterim = _
+        ; interimResultMemHostFinal = _
+        ; outerBody
+        } ->
+      let argUses = findUsesProduction arg.production in
+      let zeroUses = findUses zero in
+      let bodyUses = findUses body in
+      let outerBodyUses = findUses outerBody in
+      Set.union_list (module Identifier) [ argUses; zeroUses; bodyUses; outerBodyUses ]
+    | ScanSeq { arg; zero; body; indexMode = _; d = _; scanResultMemFinal = _; type' = _ }
+      ->
+      let argUses = findUsesProduction arg.production in
+      let zeroUses = findUses zero in
+      let bodyUses = findUses body in
+      Set.union_list (module Identifier) [ argUses; zeroUses; bodyUses ]
+    | ScanPar
+        { scan =
+            { arg; zero; body; indexMode = _; d = _; scanResultMemFinal = _; type' = _ }
+        ; scanResultMemDeviceInterim = _
+        } ->
+      let argUses = findUsesProduction arg.production in
+      let zeroUses = findUses zero in
+      let bodyUses = findUses body in
+      Set.union_list (module Identifier) [ argUses; zeroUses; bodyUses ]
+    | Scatter
+        { valuesArg
+        ; indicesArg
+        ; dIn = _
+        ; dOut = _
+        ; memInterim = _
+        ; memFinal = _
+        ; type' = _
+        } ->
+      Set.of_list (module Identifier) [ valuesArg.productionId; indicesArg.productionId ]
+    | Fold
+        { zeroArg = { zeroBinding = _; zeroValue }
+        ; arrayArgs
+        ; mappedMemArgs = _
+        ; reverse = _
+        ; body = _
+        ; d = _
+        ; character = _
+        ; type' = _
+        } ->
+      let zeroUses = findUses zeroValue in
+      let arrayArgUses =
+        List.map
+          arrayArgs
+          ~f:(fun { binding = _; production = { productionId; type' = _ } } ->
+            productionId)
+      in
+      let arrayArgUses = Set.of_list (module Identifier) arrayArgUses in
+      Set.union zeroUses arrayArgUses
+
+  and findUsesMapBody = function
+    | MapBodyStatement statement -> findUsesStatement statement
+    | MapBodySubMaps subMaps ->
+      Set.union_list (module Identifier) (List.map subMaps ~f:findUsesMapInKernel)
+
+  and findUsesMapInKernel
+    { frameShape = _
+    ; indexMode = _
+    ; mapArgs
+    ; mapMemArgs = _
+    ; mapIotas = _
+    ; mapBody
+    ; type' = _
+    }
+    =
+    let argUses =
+      Set.of_list
+        (module Identifier)
+        (List.map mapArgs ~f:(fun { binding = _; ref = { id; type' = _ } } -> id))
+    in
+    let bodyUses = findUsesMapBody mapBody in
+    Set.union argUses bodyUses
+
+  (* and findUsesMapKernel _ = _ *)
+
+  and findUsesCaptures { exprCaptures; indexCaptures = _; memCaptures = _ } =
+    exprCaptures
+    |> Map.to_alist
+    |> List.map ~f:(fun (id, _) -> id)
+    |> Set.of_list (module Identifier)
+
+  and findUsesProduction p =
+    match p with
+    | ProductionTuple { elements; type' = _ } ->
+      Set.union_list (module Identifier) (List.map elements ~f:findUsesProduction)
+    | ProductionTupleAtom { productionId; type' = _ } ->
+      Set.singleton (module Identifier) productionId
   ;;
 
   module Sexp_of = struct
@@ -830,8 +1057,7 @@ module Expr = struct
       fun sexp_of_a sexp_of_b sexp_of_c { arg; zero; body; indexMode; d = _; type' = _ } ->
       Sexp.List
         [ Sexp.Atom "reduce-zero"
-        ; Sexp.List
-            [ Sexp.Atom "index-mode"; [%sexp_of: Nested.Expr.indexMode option] indexMode ]
+        ; Sexp.List [ Sexp.Atom "index-mode"; [%sexp_of: indexMode option] indexMode ]
         ; sexp_of_t sexp_of_a sexp_of_c zero
         ; Sexp.List
             [ Sexp.Atom (Identifier.show arg.firstBinding)
@@ -851,8 +1077,7 @@ module Expr = struct
           { arg; zero; body; indexMode; d = _; scanResultMemFinal; type' = _ } ->
       Sexp.List
         [ Sexp.Atom "scan-zero"
-        ; Sexp.List
-            [ Sexp.Atom "index-mode"; [%sexp_of: Nested.Expr.indexMode option] indexMode ]
+        ; Sexp.List [ Sexp.Atom "index-mode"; [%sexp_of: indexMode option] indexMode ]
         ; sexp_of_t sexp_of_a sexp_of_c zero
         ; Sexp.List
             [ Sexp.Atom (Identifier.show arg.firstBinding)
@@ -997,8 +1222,7 @@ module Expr = struct
           } ->
       Sexp.List
         [ Sexp.Atom "loop"
-        ; Sexp.List
-            [ Sexp.Atom "index-mode"; [%sexp_of: Nested.Expr.indexMode option] indexMode ]
+        ; Sexp.List [ Sexp.Atom "index-mode"; [%sexp_of: indexMode option] indexMode ]
         ; Sexp.List [ Sexp.Atom "frame-shape"; Index.sexp_of_shapeElement frameShape ]
         ; Sexp.List
             ([ Sexp.Atom "map"
@@ -1060,10 +1284,7 @@ module Expr = struct
           { frameShape; indexMode; mapArgs; mapMemArgs; mapIotas; mapBody; type' = _ } ->
       Sexp.List
         ([ Sexp.Atom "map-kernel"
-         ; Sexp.List
-             [ Sexp.Atom "index-mode"
-             ; [%sexp_of: Nested.Expr.indexMode option] indexMode
-             ]
+         ; Sexp.List [ Sexp.Atom "index-mode"; [%sexp_of: indexMode option] indexMode ]
          ; Sexp.List [ Sexp.Atom "frame-shape"; Index.sexp_of_shapeElement frameShape ]
          ; Sexp.List
              (List.map mapArgs ~f:sexp_of_mapArg @ List.map mapMemArgs ~f:sexp_of_memArg)
@@ -1140,8 +1361,8 @@ module Expr = struct
           (match sexp_of_c captures with
            | Sexp.List [] -> []
            | capturesSexp -> [ Sexp.List [ Sexp.Atom "captures"; capturesSexp ] ]))
-         @ [ Sexp.List [ Sexp.Atom "blocks"; Int.sexp_of_t blocks ]
-           ; Sexp.List [ Sexp.Atom "threads"; Int.sexp_of_t threads ]
+         @ [ Sexp.List [ Sexp.Atom "blocks"; sexp_of_parallelism blocks ]
+           ; Sexp.List [ Sexp.Atom "threads"; sexp_of_parallelism threads ]
            ]
          @ (sexp_of_k kernel :: []))
 
