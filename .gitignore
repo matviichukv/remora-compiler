@@ -34,3 +34,5 @@ _opam/
 test.remora
 remora.code-workspace
 examples/
+
+flake.lock
