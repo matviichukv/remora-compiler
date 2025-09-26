@@ -3,7 +3,7 @@ open! Base
 (* The Nucleus language represents a monomorphized Remora program where
    all function calls have been inlined (besides intrinsic ones like map) *)
 
-module Index = Typed.Index
+module Index = Typed.Index [@@deriving show]
 
 module Type = struct
   type array =
@@ -15,6 +15,7 @@ module Type = struct
     { binding : Identifier.t
     ; bound : Sort.t
     }
+    [@@deriving show]
 
   and sigma =
     { parameters : sigmaParam list
@@ -165,7 +166,7 @@ module Expr = struct
     ; value : array
     }
 
-  and reduceCharacter = Typed.Expr.reduceCharacter
+  and reduceCharacter = Typed.Expr.reduceCharacter [@@deriving show]
   and foldCharacter = Typed.Expr.foldCharacter
 
   and arrayPrimitive =

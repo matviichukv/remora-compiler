@@ -8,9 +8,9 @@ let prelude =
 #include <algorithm>
 #include <iostream>
 #include <vector>
-#include <highfive/highfive.hpp>
-#define STB_IMAGE_IMPLEMENTATION
-#include "stb_image.h"
+//#include <highfive/highfive.hpp>
+//#define STB_IMAGE_IMPLEMENTATION
+//#include "stb_image.h"
 
 static void HandleError(cudaError_t err, const char *file, int line) {
   if (err != cudaSuccess) {
@@ -166,8 +166,8 @@ void printArray(T* elements, int64_t* dims, int64_t dimCount) {
   }
 };
 
-std::unordered_map<std::string, HighFive::File> files;
-
+//std::unordered_map<std::string, HighFive::File> files;
+/*
 template <typename T>
 void readH5(std::string filename, std::string dataset_name, T* data, size_t size) {
   auto entry = files.find(filename);
@@ -190,6 +190,7 @@ void read_image(std::string file, unsigned char* data, size_t size) {
   memcpy(data, data_stbi, size);
   stbi_image_free(data_stbi);
 }
+   */
 |}
   |> String.strip
   |> String.split_lines

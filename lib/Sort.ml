@@ -3,4 +3,4 @@ open! Base
 type t =
   | Dim
   | Shape
-[@@deriving equal, sexp, compare]
+[@@deriving equal, sexp, compare, show]

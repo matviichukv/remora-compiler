@@ -29,6 +29,7 @@
   re2
   ppx_jane
   ppx_deriving
+  core_unix
   (core_unix :with-test)
   (ocamlformat
    (and

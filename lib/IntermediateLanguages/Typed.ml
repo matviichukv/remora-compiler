@@ -7,7 +7,7 @@ type 't param =
   { binding : Identifier.t
   ; bound : 't
   }
-[@@deriving sexp, compare, equal]
+[@@deriving sexp, compare, equal, show]
 
 module Index = struct
   type dimension =
@@ -16,10 +16,12 @@ module Index = struct
     }
   [@@deriving sexp, compare, equal]
 
+  let pp_dimension _ _ = ()
+
   type shapeElement =
     | Add of dimension
     | ShapeRef of Identifier.t
-  [@@deriving sexp, compare, equal]
+  [@@deriving sexp, compare, equal, show]
 
   module ShapeElement = struct
     module T = struct
@@ -30,12 +32,12 @@ module Index = struct
     include Comparator.Make (T)
   end
 
-  type shape = shapeElement list [@@deriving sexp, compare, equal]
+  type shape = shapeElement list [@@deriving sexp, compare, equal, show]
 
   type t =
     | Dimension of dimension
     | Shape of shape
-  [@@deriving sexp, compare, equal]
+  [@@deriving sexp, compare, equal, show]
 
   let dimensionConstant n = { const = n; refs = Map.empty (module Identifier) }
   let dimensionRef r = { const = 0; refs = Map.singleton (module Identifier) r 1 }
@@ -81,6 +83,7 @@ module Type = struct
     | Int32
     | UInt64
     | Int64
+    [@@deriving show]
 
   and literal =
     | IntLiteral of intVariant
@@ -125,12 +128,12 @@ module Expr = struct
   type reduceCharacter =
     | Reduce
     | Scan
-  [@@deriving compare, sexp, equal]
+  [@@deriving compare, sexp, equal, show]
 
   type foldCharacter =
     | Fold
     | Trace
-  [@@deriving compare, sexp, equal]
+  [@@deriving compare, sexp, equal, show]
 
   type primitiveFuncName =
     | Add

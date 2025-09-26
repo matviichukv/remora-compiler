@@ -54,7 +54,7 @@ module Type = struct
     | Sigma of sigma
     | Literal of literal
     | Tuple of tuple
-  [@@deriving sexp_of, equal, compare]
+  [@@deriving sexp_of, equal, compare, show]
 end
 
 module Expr = struct
