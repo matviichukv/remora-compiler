@@ -5,6 +5,7 @@ module Cx = C.Syntax
 let prelude =
   {|
 #include <cstdio>
+#include <cstdint>
 #include <algorithm>
 #include <iostream>
 #include <vector>
